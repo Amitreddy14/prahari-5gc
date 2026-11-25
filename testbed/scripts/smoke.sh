@@ -123,6 +123,29 @@ else
     fi
 fi
 
+# 8. Probe: live N4 events with every PDU session tracked to "active".
+events="events/events.jsonl"
+# Only complete JSON lines count: the probe may be appending while we read.
+complete_events() { grep -E '^\{.*\}$' "${events}" 2>/dev/null || true; }
+probe_sessions() {
+    complete_events | grep '"message":"SessionEstablishmentResponse"' \
+        | grep -c '"session_state":"active"' || true
+}
+all_sessions_seen() { [ "$(probe_sessions)" -ge "${UE_COUNT}" ]; }
+if [ ! -s "${events}" ]; then
+    bad "probe events" "no ${events} yet (docker compose logs probe)"
+elif wait_for all_sessions_seen; then
+    total="$(complete_events | wc -l | tr -d ' ')"
+    bad_decodes="$(complete_events | grep -vc '"decode_status":"ok"' || true)"
+    if [ "${bad_decodes}" -eq 0 ]; then
+        ok "probe: ${total} N4 events, $(probe_sessions) sessions active, 0 decode errors"
+    else
+        bad "probe decode" "${bad_decodes} of ${total} events not decoded cleanly"
+    fi
+else
+    bad "probe sessions" "$(probe_sessions)/${UE_COUNT} sessions seen as active in ${events}"
+fi
+
 echo
 echo "Result: ${pass} passed, ${fail} failed"
 [ "${fail}" -eq 0 ]

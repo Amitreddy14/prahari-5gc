@@ -239,6 +239,31 @@ services:
       - sctp or (udp port 8805) or (tcp port 7777)
     depends_on: { nrf: { condition: service_started } }
 
+  probe:
+    image: prahari/probe:0.2.0
+    pull_policy: build
+    build:
+      context: ../probe
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    logging: *logging
+    # Same reasoning as capture: host netns sees all traffic on the prahari-core bridge.
+    network_mode: host
+    cap_drop: [ALL]
+    cap_add: [NET_RAW, NET_ADMIN]   # raw capture + promiscuous mode, nothing else
+    security_opt: ["no-new-privileges:true"]
+    volumes: [./events:/events]
+    command:
+      - run
+      - --iface
+      - prahari-core
+      - --filter
+      - "udp port 8805 or sctp"
+      - --out
+      - /events/events.jsonl
+      - --stats
+    depends_on: { nrf: { condition: service_started } }
+
 networks:
   core:
     name: prahari-core

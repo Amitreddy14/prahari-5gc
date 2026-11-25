@@ -6,7 +6,8 @@ core's control plane (NGAP, NAS-5GS, PFCP, HTTP/2 SBI), and an analytics layer
 that detects attacks, measures its own robustness, and explains each alert in
 terms of the 3GPP procedure being abused.
 
-> Status: **Phase 1 (testbed)**. See [`task.md`](task.md) for the roadmap.
+> Status: **Phase 2 (probe: live capture + PFCP)**. See [`task.md`](task.md) for the roadmap
+> and [`docs/results/probe-phase2.md`](docs/results/probe-phase2.md) for measured results.
 > Results tables will appear here only when a committed script produces them.
 
 ```mermaid
@@ -55,11 +56,23 @@ Requirements: Docker Desktop (WSL2 backend) and VS Code with the Dev Containers 
    ```bash
    cd testbed && cp .env.example .env && docker compose up -d --build && bash scripts/smoke.sh
    ```
-5. **Try the probe's PFCP decoder:**
+5. **Watch the probe decode live N4 traffic** from the running testbed:
    ```bash
-   ./probe/build/release/prahari-probe decode-pfcp 23320015000000000000002a00000750003c0005000a000001
-   # {"ok":true,"protocol":"pfcp","message_type":50,"message":"SessionEstablishmentRequest","sequence":7,"seid":"42","priority":5,"body_len":9}
+   tail -f testbed/events/events.jsonl
    ```
+   or run it on a capture file:
+   ```bash
+   ./probe/build/release/prahari-probe run --pcap probe/tests/data/n4-lifecycle.pcap --stats
+   ```
+
+### Measured so far
+
+| What | Result |
+|---|---|
+| PFCP decoding vs tshark (1,342 real messages) | 0 mismatches |
+| Probe throughput, one 2.3 GHz core | ~650k PFCP msgs/s (JSON included) |
+| Fuzzing (3 targets, ~17M inputs) | 0 crashes |
+| Testbed footprint at 100 UEs | ~425 MB RAM |
 
 ## Engineering standards
 

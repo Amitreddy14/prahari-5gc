@@ -21,7 +21,12 @@ Checks: >
   -modernize-use-trailing-return-type,
   -readability-identifier-length,
   -readability-function-cognitive-complexity,
-  -cppcoreguidelines-avoid-do-while
+  -cppcoreguidelines-avoid-do-while,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-avoid-const-or-ref-data-members
+# owning-memory: assumes the GSL `owner<>` annotations, which this project does not use;
+#   ownership is expressed with std::unique_ptr instead.
+# avoid-const-or-ref-data-members: Pipeline holds a Sink& on purpose (non-owning, non-null).
 WarningsAsErrors: '*'
 HeaderFilterRegex: 'prahari/.*'
 ...

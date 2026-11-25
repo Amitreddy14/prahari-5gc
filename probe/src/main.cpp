@@ -1,18 +1,27 @@
 // SPDX-License-Identifier: MIT
 // prahari-probe: passive 5G core signalling probe.
-// Phase 0 ships the CLI shell and an offline PFCP header decoder; live capture
-// (libpcap), NGAP/NAS/SBI decoding and Kafka export arrive in Phases 2-3.
+//
+//   prahari-probe run   --iface prahari-core [--out events.jsonl]   live capture
+//   prahari-probe run   --pcap capture.pcap  [--out events.jsonl]   offline file
+//   prahari-probe bench --pcap capture.pcap  [--repeat 200]         decode throughput
+//   prahari-probe decode-pfcp <hex>                                  one PFCP header
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "prahari/pcap_source.hpp"
 #include "prahari/pfcp.hpp"
+#include "prahari/pipeline.hpp"
 #include "prahari/version.hpp"
 
 namespace {
@@ -20,14 +29,240 @@ namespace {
 constexpr int kExitOk = 0;
 constexpr int kExitUsage = 64;    // EX_USAGE
 constexpr int kExitDataErr = 65;  // EX_DATAERR
+constexpr int kExitNoInput = 66;  // EX_NOINPUT
+constexpr int kExitIoErr = 74;    // EX_IOERR
+constexpr std::string_view kDefaultFilter = "udp port 8805 or sctp";
+
+// The signal handler needs the active source to break the capture loop; a global
+// atomic pointer is the only async-signal-safe channel for that.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+std::atomic<prahari::PcapSource*> g_source{nullptr};
+
+extern "C" void on_signal(int /*sig*/) {
+    if (auto* s = g_source.load()) {
+        s->stop();
+    }
+}
 
 void print_usage(std::ostream& out) {
     out << "prahari-probe " << prahari::kVersion << "\n"
-        << "Passive 5G core signalling probe (NGAP / NAS / PFCP / SBI).\n\n"
+        << "Passive 5G core signalling probe (PFCP today; NGAP/NAS/SBI in Phase 3).\n\n"
         << "Usage:\n"
-        << "  prahari-probe --version\n"
-        << "  prahari-probe --help\n"
-        << "  prahari-probe decode-pfcp <hex>   Decode one PFCP header, print JSON\n";
+        << "  prahari-probe run (--iface IF | --pcap FILE) [options]\n"
+        << "      --filter BPF     capture filter (default: \"" << kDefaultFilter << "\")\n"
+        << "      --out FILE       JSON Lines output, appended (default: stdout)\n"
+        << "      --nf-map FILE    'IP NF' lines mapping addresses to NF names\n"
+        << "                       (default: the Prahari testbed addresses)\n"
+        << "      --seed N         deterministic event IDs (tests, reproducible datasets)\n"
+        << "      --stats          print pipeline statistics as JSON to stderr at exit\n"
+        << "  prahari-probe bench --pcap FILE [--repeat N]   decode throughput, no output\n"
+        << "  prahari-probe decode-pfcp <hex>                decode one PFCP header\n"
+        << "  prahari-probe --version | --help\n";
+}
+
+struct Options {
+    std::string iface;
+    std::string pcap;
+    std::string filter{kDefaultFilter};
+    std::string out;
+    std::string nf_map;
+    std::optional<std::uint64_t> seed;
+    bool stats{};
+    std::uint64_t repeat{200};
+};
+
+std::optional<std::uint64_t> parse_u64(std::string_view s) {
+    if (s.empty() || s.size() > 19) {
+        return std::nullopt;
+    }
+    std::uint64_t v = 0;
+    for (const char c : s) {
+        if (c < '0' || c > '9') {
+            return std::nullopt;
+        }
+        v = v * 10 + static_cast<std::uint64_t>(c - '0');
+    }
+    return v;
+}
+
+// Parses "--flag value" pairs after the subcommand. Returns an error message or empty.
+std::string parse_options(const std::vector<std::string_view>& args, Options& o) {
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const auto a = args[i];
+        auto value = [&]() -> std::optional<std::string_view> {
+            if (i + 1 >= args.size()) {
+                return std::nullopt;
+            }
+            return args[++i];
+        };
+        if (a == "--stats") {
+            o.stats = true;
+            continue;
+        }
+        const auto v = value();
+        if (!v) {
+            return std::string{"missing value for "} + std::string{a};
+        }
+        if (a == "--iface") {
+            o.iface = *v;
+        } else if (a == "--pcap") {
+            o.pcap = *v;
+        } else if (a == "--filter") {
+            o.filter = *v;
+        } else if (a == "--out") {
+            o.out = *v;
+        } else if (a == "--nf-map") {
+            o.nf_map = *v;
+        } else if (a == "--seed") {
+            o.seed = parse_u64(*v);
+            if (!o.seed) {
+                return "--seed needs a non-negative integer";
+            }
+        } else if (a == "--repeat") {
+            const auto r = parse_u64(*v);
+            if (!r || *r == 0) {
+                return "--repeat needs a positive integer";
+            }
+            o.repeat = *r;
+        } else {
+            return std::string{"unknown option "} + std::string{a};
+        }
+    }
+    return {};
+}
+
+int cmd_run(const Options& o) {
+    if (o.iface.empty() == o.pcap.empty()) {
+        std::cerr << "error: give exactly one of --iface or --pcap\n";
+        return kExitUsage;
+    }
+    prahari::NfMap nf_map = prahari::NfMap::testbed_default();
+    if (!o.nf_map.empty()) {
+        std::string err;
+        if (!nf_map.load_file(o.nf_map, err)) {
+            std::cerr << "error: " << err << "\n";
+            return kExitDataErr;
+        }
+    }
+    auto opened = o.pcap.empty() ? prahari::PcapSource::open_live(o.iface, o.filter)
+                                 : prahari::PcapSource::open_file(o.pcap, o.filter);
+    if (!opened.source) {
+        std::cerr << "error: " << opened.error << "\n";
+        return kExitNoInput;
+    }
+    auto& src = *opened.source;
+    if (!src.link_supported()) {
+        std::cerr << "error: unsupported link type " << src.raw_link() << "\n";
+        return kExitDataErr;
+    }
+
+    std::FILE* out = stdout;
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> owned{nullptr, &std::fclose};
+    if (!o.out.empty() && o.out != "-") {
+        owned.reset(std::fopen(o.out.c_str(), "ae"));
+        if (!owned) {
+            std::cerr << "error: cannot open output '" << o.out << "'\n";
+            return kExitIoErr;
+        }
+        out = owned.get();
+    }
+    prahari::StreamSink sink{out};
+    std::optional<prahari::Pipeline> pipeline;
+    if (o.seed) {
+        pipeline.emplace(std::move(nf_map), sink, *o.seed);
+    } else {
+        pipeline.emplace(std::move(nf_map), sink);
+    }
+
+    g_source.store(&src);
+    (void)std::signal(SIGINT, on_signal);
+    (void)std::signal(SIGTERM, on_signal);
+    if (!o.iface.empty()) {
+        std::cerr << "prahari-probe: capturing on " << o.iface << " (filter: " << o.filter
+                  << "); Ctrl+C to stop\n";
+    }
+
+    // Live mode: hand complete lines to the file at least this often, so consumers
+    // tailing events.jsonl stay current even under constant traffic.
+    constexpr auto kLiveFlushEvery = std::chrono::milliseconds{200};
+    const bool live = !o.iface.empty();
+    auto last_flush = std::chrono::steady_clock::now();
+    int rc = kExitOk;
+    prahari::Frame f;
+    for (;;) {
+        const auto n = src.next(f);
+        if (n == prahari::PcapSource::Next::kFrame) {
+            pipeline->on_frame(f.ts_ns, src.link(), f.data);
+            if (live) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last_flush >= kLiveFlushEvery) {
+                    sink.flush();
+                    last_flush = now;
+                }
+            }
+            continue;
+        }
+        if (n == prahari::PcapSource::Next::kTimeout) {
+            sink.flush();  // idle: keep the output file current
+            last_flush = std::chrono::steady_clock::now();
+            continue;
+        }
+        if (n == prahari::PcapSource::Next::kError) {
+            std::cerr << "error: capture failed: " << src.last_error() << "\n";
+            rc = kExitIoErr;
+        }
+        break;
+    }
+    g_source.store(nullptr);
+    sink.flush();
+    if (o.stats) {
+        std::cerr << prahari::stats_json(pipeline->stats(), pipeline->sessions()) << "\n";
+    }
+    return rc;
+}
+
+int cmd_bench(const Options& o) {
+    if (o.pcap.empty()) {
+        std::cerr << "error: bench needs --pcap FILE\n";
+        return kExitUsage;
+    }
+    auto opened = prahari::PcapSource::open_file(o.pcap, o.filter);
+    if (!opened.source) {
+        std::cerr << "error: " << opened.error << "\n";
+        return kExitNoInput;
+    }
+    auto& src = *opened.source;
+    struct Owned {
+        std::uint64_t ts;
+        std::vector<std::uint8_t> bytes;
+    };
+    std::vector<Owned> frames;
+    prahari::Frame f;
+    while (src.next(f) == prahari::PcapSource::Next::kFrame) {
+        frames.push_back({f.ts_ns, {f.data.begin(), f.data.end()}});
+    }
+    if (frames.empty()) {
+        std::cerr << "error: no frames matched the filter\n";
+        return kExitDataErr;
+    }
+    prahari::NullSink sink;
+    prahari::Pipeline pipeline{prahari::NfMap::testbed_default(), sink, 1};
+    const auto start = std::chrono::steady_clock::now();
+    for (std::uint64_t r = 0; r < o.repeat; ++r) {
+        for (const auto& fr : frames) {
+            pipeline.on_frame(fr.ts, src.link(), fr.bytes);
+        }
+    }
+    const auto secs =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    const auto& s = pipeline.stats();
+    const auto msgs = static_cast<double>(s.pfcp_messages);
+    std::cout << "{\"frames\":" << s.frames << ",\"pfcp_messages\":" << s.pfcp_messages
+              << ",\"events\":" << s.events << ",\"json_bytes\":" << sink.bytes()
+              << ",\"seconds\":" << secs << ",\"pfcp_msgs_per_sec\":" << (msgs / secs)
+              << ",\"ns_per_pfcp_msg\":" << (secs * 1e9 / msgs)
+              << ",\"frames_per_sec\":" << (static_cast<double>(s.frames) / secs) << "}\n";
+    return kExitOk;
 }
 
 std::optional<std::uint8_t> hex_nibble(char c) {
@@ -62,12 +297,12 @@ std::optional<std::vector<std::uint8_t>> parse_hex(std::string_view text) {
         }
     }
     if (high) {
-        return std::nullopt;  // odd number of digits
+        return std::nullopt;
     }
     return out;
 }
 
-int decode_pfcp(std::string_view hex) {
+int cmd_decode_pfcp(std::string_view hex) {
     const auto bytes = parse_hex(hex);
     if (!bytes) {
         std::cerr << "error: input is not valid hex\n";
@@ -83,7 +318,7 @@ int decode_pfcp(std::string_view hex) {
               << R"(,"message":")" << prahari::pfcp::message_name(h.message_type) << '"'
               << R"(,"sequence":)" << h.sequence;
     if (h.seid) {
-        std::cout << R"(,"seid":")" << *h.seid << '"';  // string: u64 exceeds JSON-safe ints
+        std::cout << R"(,"seid":")" << *h.seid << '"';
     }
     if (h.priority) {
         std::cout << R"(,"priority":)" << unsigned{*h.priority};
@@ -102,7 +337,16 @@ int run(const std::vector<std::string_view>& args) {
         return kExitOk;
     }
     if (args[0] == "decode-pfcp" && args.size() == 2) {
-        return decode_pfcp(args[1]);
+        return cmd_decode_pfcp(args[1]);
+    }
+    if (args[0] == "run" || args[0] == "bench") {
+        Options o;
+        if (const auto err = parse_options(args, o); !err.empty()) {
+            std::cerr << "error: " << err << "\n\n";
+            print_usage(std::cerr);
+            return kExitUsage;
+        }
+        return args[0] == "run" ? cmd_run(o) : cmd_bench(o);
     }
     print_usage(std::cerr);
     return kExitUsage;

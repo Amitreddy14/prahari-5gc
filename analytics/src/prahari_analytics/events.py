@@ -55,6 +55,23 @@ class SbiInfo(_Strict):
     service: Annotated[str, Field(max_length=32)] | None = None
 
 
+SessionState = Literal["establishing", "active", "deleted", "unknown"]
+Seid = Annotated[str, Field(pattern=r"^[0-9]{1,20}$")]
+Count16 = Annotated[int, Field(ge=0, le=65535)]
+
+
+class PfcpInfo(_Strict):
+    cp_seid: Seid | None = None
+    up_seid: Seid | None = None
+    session_state: SessionState | None = None
+    session_known: bool | None = None
+    node_id: Annotated[str, Field(max_length=255)] | None = None
+    cause_code: Annotated[int, Field(ge=0, le=255)] | None = None
+    ie_count: Count16 | None = None
+    pdr_count: Count16 | None = None
+    far_count: Count16 | None = None
+
+
 class Labels(_Strict):
     is_attack: bool
     attack_id: Annotated[str, Field(pattern=r"^(N2|N4|SBI|UE)-[0-9]{2}$")] | None = None
@@ -78,6 +95,7 @@ class SignallingEvent(_Strict):
     sequence: Annotated[int, Field(ge=0, le=16_777_215)] | None = None
     cause: Annotated[str, Field(max_length=64)] | None = None
     sbi: SbiInfo | None = None
+    pfcp: PfcpInfo | None = None
     labels: Labels | None = None
 
     @classmethod

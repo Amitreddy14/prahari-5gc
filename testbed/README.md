@@ -32,6 +32,7 @@ cd testbed
 cp .env.example .env              # adjust PRAHARI_UE_COUNT if you like
 docker compose build nrf          # Open5GS image, built once for all NFs (~5-10 min first time)
 docker compose build gnb capture  # UERANSIM + capture images (~5 min first time)
+docker compose build probe        # Prahari probe (~1 min)
 docker compose up -d
 bash scripts/smoke.sh             # end-to-end checks
 ```
@@ -45,7 +46,8 @@ A passing smoke test looks like:
   [ OK ] 10/10 UEs registered with a PDU session
   [ OK ] user plane: UE -> gNB -> UPF ping to 10.45.0.1
   [ OK ] capture recording N2=... N4=... SBI=... packets in core-....pcap
-Result: 6 passed, 0 failed
+  [ OK ] probe: ... N4 events, 10 sessions active, 0 decode errors
+Result: 7 passed, 0 failed
 ```
 
 Useful commands:
@@ -58,6 +60,8 @@ Useful commands:
 | UERANSIM CLI | `docker compose exec gnb nr-cli --dump` |
 | Change UE count | edit `.env`, then `docker compose up -d --force-recreate provision ue` |
 | Resource profile | `bash scripts/profile.sh 10 50 100` → `docs/results/testbed-profile.md` |
+| Live probe events | `tail -f events/events.jsonl` |
+| Probe statistics | `docker compose restart probe && docker compose logs probe` (printed at stop) |
 | Stop (keep DB) | `docker compose down` |
 | Stop and wipe DB | `docker compose down -v` |
 
@@ -73,7 +77,7 @@ mongo ─┬─ provision (one-shot: N subscribers)
        └─ pcf ─┤
 nrf ──── ausf, udm, nssf, bsf ─┤
 upf ──── smf ──────────────────┴─ amf ── gnb ── ue (after provision succeeds)
-capture (independent, host network)
+capture, probe (independent, host network)
 ```
 
 Health checks gate each arrow: SBI NFs are healthy once their HTTP/2 server

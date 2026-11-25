@@ -1,7 +1,8 @@
 # Run inside the dev container (VS Code: "Reopen in Container") or any Linux box.
 # Windows without make: the commands under each target work as-is in the container shell.
 .PHONY: help probe probe-asan probe-release tidy fuzz analytics lint check preflight clean \
-	testbed-up testbed-down testbed-smoke testbed-profile testbed-logs
+	testbed-up testbed-down testbed-smoke testbed-profile testbed-logs \
+	bench crosscheck probe-events
 
 PY ?= python3
 FUZZ_SECONDS ?= 60
@@ -11,7 +12,10 @@ help:
 	@echo "probe-asan     Build + test under ASan/UBSan (Clang)"
 	@echo "probe-release  Release build + tests"
 	@echo "tidy           clang-tidy over probe sources"
-	@echo "fuzz           Run the PFCP fuzzer for FUZZ_SECONDS (default 60)"
+	@echo "fuzz           Run every fuzzer for FUZZ_SECONDS each (default 60)"
+	@echo "bench          Probe PFCP throughput on PCAP (default: the test fixture)"
+	@echo "crosscheck     Probe vs tshark, field by field, on PCAP"
+	@echo "probe-events   Follow live probe events from the running testbed"
 	@echo "analytics      ruff + mypy + pytest for the Python package"
 	@echo "lint           shellcheck + clang-format check"
 	@echo "check          Everything CI runs"
@@ -36,17 +40,33 @@ tidy: probe-asan
 
 fuzz:
 	cd probe && cmake --preset fuzz && cmake --build --preset fuzz && \
-	mkdir -p build/fuzz/corpus && cp fuzz/corpus/pfcp/* build/fuzz/corpus/ && \
-	./build/fuzz/fuzz_pfcp -max_total_time=$(FUZZ_SECONDS) build/fuzz/corpus
+	for f in pfcp pfcp_ie frame; do \
+	  mkdir -p build/fuzz/corpus-$$f && cp fuzz/corpus/$$f/* build/fuzz/corpus-$$f/ && \
+	  ./build/fuzz/fuzz_$$f -max_total_time=$(FUZZ_SECONDS) build/fuzz/corpus-$$f || exit 1; \
+	done
+
+PCAP ?= probe/tests/data/n4-lifecycle.pcap
+
+bench: probe-release
+	./probe/build/release/prahari-probe bench --pcap $(PCAP) --filter "udp port 8805" --repeat 2000
+
+crosscheck: probe-release
+	python3 probe/tools/crosscheck_tshark.py --probe probe/build/release/prahari-probe $(PCAP)
+
+probe-events:
+	tail -f testbed/events/events.jsonl
 
 analytics:
 	cd analytics && ruff check . && ruff format --check . && mypy && pytest
+
+analytics-contract: probe-release
+	cd analytics && PRAHARI_PROBE_BIN=../probe/build/release/prahari-probe pytest tests/test_probe_output.py
 
 lint:
 	shellcheck scripts/*.sh testbed/scripts/*.sh testbed/docker/*.sh
 	find probe -path probe/build -prune -o \( -name '*.cpp' -o -name '*.hpp' \) -print | xargs clang-format --dry-run --Werror
 
-check: lint probe-asan probe-release tidy analytics
+check: lint probe-asan probe-release tidy analytics analytics-contract crosscheck
 
 preflight:
 	bash scripts/check-host.sh

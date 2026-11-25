@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(prahari_probe
-    VERSION 0.0.1
+    VERSION 0.2.0
     DESCRIPTION "Passive 5G core signalling probe"
     LANGUAGES CXX)
 
@@ -20,13 +20,23 @@ include(cmake/Warnings.cmake)
 configure_file(include/prahari/version.hpp.in
                ${CMAKE_CURRENT_BINARY_DIR}/generated/prahari/version.hpp @ONLY)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PCAP REQUIRED IMPORTED_TARGET libpcap)
+
 # Core library: every decoder lives here so tests and the CLI share one build.
 add_library(prahari_core
     src/byte_reader.cpp
-    src/pfcp.cpp)
+    src/pfcp.cpp
+    src/pfcp_ie.cpp
+    src/net.cpp
+    src/session_table.cpp
+    src/event.cpp
+    src/pipeline.cpp
+    src/pcap_source.cpp)
 target_include_directories(prahari_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_link_libraries(prahari_core PUBLIC PkgConfig::PCAP)
 prahari_set_warnings(prahari_core)
 
 add_executable(prahari-probe src/main.cpp)
@@ -45,7 +55,14 @@ if(PRAHARI_BUILD_TESTS)
     find_package(GTest REQUIRED)
     add_executable(prahari_tests
         tests/test_byte_reader.cpp
-        tests/test_pfcp.cpp)
+        tests/test_pfcp.cpp
+        tests/test_net.cpp
+        tests/test_pfcp_ie.cpp
+        tests/test_session_table.cpp
+        tests/test_event.cpp
+        tests/test_pipeline_capture.cpp)
+    target_compile_definitions(prahari_tests PRIVATE
+        PRAHARI_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(prahari_tests PRIVATE prahari_core GTest::gtest GTest::gtest_main)
     prahari_set_warnings(prahari_tests)
     include(GoogleTest)
@@ -59,15 +76,26 @@ if(PRAHARI_BUILD_TESTS)
              PASS_REGULAR_EXPRESSION "\"message\":\"HeartbeatRequest\"")
     add_test(NAME cli_decode_pfcp_truncated COMMAND prahari-probe decode-pfcp "2001")
     set_tests_properties(cli_decode_pfcp_truncated PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME cli_run_fixture
+             COMMAND prahari-probe run --pcap ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/n4-lifecycle.pcap --seed 7)
+    set_tests_properties(cli_run_fixture PROPERTIES
+             PASS_REGULAR_EXPRESSION "\"message\":\"SessionDeletionResponse\"")
+    add_test(NAME cli_run_needs_input COMMAND prahari-probe run)
+    set_tests_properties(cli_run_needs_input PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME cli_bench_fixture
+             COMMAND prahari-probe bench --pcap ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/n4-lifecycle.pcap --repeat 10)
+    set_tests_properties(cli_bench_fixture PROPERTIES PASS_REGULAR_EXPRESSION "pfcp_msgs_per_sec")
 endif()
 
 if(PRAHARI_FUZZ)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "PRAHARI_FUZZ requires Clang")
     endif()
-    add_executable(fuzz_pfcp fuzz/fuzz_pfcp.cpp)
-    target_link_libraries(fuzz_pfcp PRIVATE prahari_core)
-    target_compile_options(fuzz_pfcp PRIVATE -fsanitize=fuzzer)
-    target_link_options(fuzz_pfcp PRIVATE -fsanitize=fuzzer)
-    prahari_set_warnings(fuzz_pfcp)
+    foreach(f fuzz_pfcp fuzz_pfcp_ie fuzz_frame)
+        add_executable(${f} fuzz/${f}.cpp)
+        target_link_libraries(${f} PRIVATE prahari_core)
+        target_compile_options(${f} PRIVATE -fsanitize=fuzzer)
+        target_link_options(${f} PRIVATE -fsanitize=fuzzer)
+        prahari_set_warnings(${f})
+    endforeach()
 endif()
