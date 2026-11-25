@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "event_id": "0e4a9b1c-77d2-4a51-b0a8-9c3d2e1f4b56",
+  "ts_ns": 1764064802500000000,
+  "interface": "SBI",
+  "protocol": "HTTP2",
+  "message": "NFDiscover",
+  "message_code": 0,
+  "direction": "request",
+  "src": { "ip": "172.22.0.5", "port": 41022, "nf": "AMF" },
+  "dst": { "ip": "172.22.0.10", "port": 7777, "nf": "NRF" },
+  "size_bytes": 184,
+  "decode_status": "ok",
+  "sequence": 13,
+  "sbi": { "method": "GET", "path": "/nnrf-disc/v1/nf-instances", "service": "nnrf-disc" }
+}

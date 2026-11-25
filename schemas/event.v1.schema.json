@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Amitreddy14/prahari-5gc/schemas/event.v1.schema.json",
+  "title": "Prahari signalling event v1",
+  "description": "One decoded control-plane message observed by the probe. Produced by the C++ probe, consumed by the Python analytics. One JSON object per Kafka record (topic prahari.events.v1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "ts_ns", "interface", "protocol",
+    "message", "message_code", "src", "dst", "size_bytes", "decode_status"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "format": "uuid", "description": "UUIDv4, unique per event" },
+    "ts_ns": { "type": "integer", "minimum": 0, "description": "Capture timestamp, Unix epoch nanoseconds" },
+    "interface": {
+      "enum": ["N2", "N4", "SBI"],
+      "description": "3GPP reference point: N2 = gNB-AMF (NGAP over SCTP), N4 = SMF-UPF (PFCP over UDP 8805), SBI = NF-NF HTTP/2"
+    },
+    "protocol": { "enum": ["NGAP", "NAS-5GS", "PFCP", "HTTP2"] },
+    "message": { "type": "string", "minLength": 1, "maxLength": 96, "description": "Human-readable message or procedure name, e.g. SessionEstablishmentRequest" },
+    "message_code": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "Numeric message type / procedure code from the protocol spec" },
+    "direction": { "enum": ["request", "response", "indication", "unknown"], "default": "unknown" },
+    "src": { "$ref": "#/$defs/endpoint" },
+    "dst": { "$ref": "#/$defs/endpoint" },
+    "size_bytes": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "decode_status": {
+      "enum": ["ok", "truncated", "bad_version", "bad_length", "unsupported", "malformed"],
+      "description": "Malformed traffic is still emitted: it is evidence, not noise"
+    },
+    "ue": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Correlation identifiers. Permanent identities are never emitted in clear.",
+      "properties": {
+        "ran_ue_ngap_id": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "amf_ue_ngap_id": { "type": "integer", "minimum": 0, "maximum": 1099511627775 },
+        "supi_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "First 64 bits of HMAC-SHA256(key, SUPI), hex" },
+        "seid": { "type": "string", "pattern": "^[0-9]{1,20}$", "description": "PFCP SEID as decimal string (u64 is not JSON-number safe)" },
+        "pdu_session_id": { "type": "integer", "minimum": 0, "maximum": 255 }
+      }
+    },
+    "sequence": { "type": "integer", "minimum": 0, "maximum": 16777215, "description": "PFCP sequence number or HTTP/2 stream id" },
+    "cause": { "type": "string", "maxLength": 64 },
+    "sbi": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+        "path": { "type": "string", "maxLength": 256, "description": "Path only; query strings are stripped" },
+        "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "service": { "type": "string", "maxLength": 32, "description": "e.g. nnrf-disc, namf-comm, nsmf-pdusession" }
+      }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Ground truth, set only on testbed datasets by the attack injector. Never present in live mode.",
+      "properties": {
+        "is_attack": { "type": "boolean" },
+        "attack_id": { "type": "string", "pattern": "^(N2|N4|SBI|UE)-[0-9]{2}$" },
+        "run_id": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["is_attack"]
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ip", "port"],
+      "properties": {
+        "ip": { "type": "string", "anyOf": [{ "format": "ipv4" }, { "format": "ipv6" }] },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "nf": { "enum": ["gNB", "AMF", "SMF", "UPF", "NRF", "AUSF", "UDM", "UDR", "PCF", "NSSF", "BSF", "UE", "unknown"] }
+      }
+    }
+  }
+}
