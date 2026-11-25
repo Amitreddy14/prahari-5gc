@@ -6,7 +6,7 @@ core's control plane (NGAP, NAS-5GS, PFCP, HTTP/2 SBI), and an analytics layer
 that detects attacks, measures its own robustness, and explains each alert in
 terms of the 3GPP procedure being abused.
 
-> Status: **Phase 0 (foundation)**. See [`task.md`](task.md) for the roadmap.
+> Status: **Phase 1 (testbed)**. See [`task.md`](task.md) for the roadmap.
 > Results tables will appear here only when a committed script produces them.
 
 ```mermaid
@@ -35,7 +35,8 @@ with the NRF. Prahari watches those interfaces and catches it. Full reasoning in
 | [`analytics/`](analytics) | Python: event contract, detectors, evaluation |
 | [`schemas/`](schemas) | Event contract v1 (JSON Schema) + examples |
 | [`docs/adr/`](docs/adr) | Architecture decision records |
-| `testbed/`, `attacks/`, `triage/`, `console/` | Arrive in Phases 1, 4, 7, 8 |
+| [`testbed/`](testbed) | Open5GS v2.7.7 + UERANSIM v3.2.8 in Compose, capture sidecar, smoke test |
+| `attacks/`, `triage/`, `console/` | Arrive in Phases 4, 7, 8 |
 
 ## Quick start
 
@@ -50,7 +51,11 @@ Requirements: Docker Desktop (WSL2 backend) and VS Code with the Dev Containers 
    ```bash
    make check          # lint, probe (ASan + release), clang-tidy, analytics
    ```
-4. **Try the probe's PFCP decoder:**
+4. **Start the 5G network** (first build ~10 min) and check it end to end:
+   ```bash
+   cd testbed && cp .env.example .env && docker compose up -d --build && bash scripts/smoke.sh
+   ```
+5. **Try the probe's PFCP decoder:**
    ```bash
    ./probe/build/release/prahari-probe decode-pfcp 23320015000000000000002a00000750003c0005000a000001
    # {"ok":true,"protocol":"pfcp","message_type":50,"message":"SessionEstablishmentRequest","sequence":7,"seid":"42","priority":5,"body_len":9}

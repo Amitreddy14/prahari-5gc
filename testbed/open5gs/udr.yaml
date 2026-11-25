@@ -1,0 +1,17 @@
+db_uri: mongodb://172.22.0.30/open5gs
+# Prahari-5GC testbed. Open5GS v2.7.7. Test PLMN 001/01.
+# Addresses: see Architecture.md section 6. Logs go to stdout (no logger.file).
+logger:
+  level: info
+global:
+  max:
+    ue: 1024
+
+udr:
+  sbi:
+    server:
+      - address: 172.22.0.13
+        port: 7777
+    client:
+      nrf:
+        - uri: http://172.22.0.10:7777

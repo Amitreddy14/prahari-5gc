@@ -1,0 +1,17 @@
+# Prahari-5GC testbed. Open5GS v2.7.7. Test PLMN 001/01.
+# Addresses: see Architecture.md section 6. Logs go to stdout (no logger.file).
+logger:
+  level: info
+global:
+  max:
+    ue: 1024
+
+nrf:
+  serving:
+    - plmn_id:
+        mcc: 001
+        mnc: 01
+  sbi:
+    server:
+      - address: 172.22.0.10
+        port: 7777

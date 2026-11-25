@@ -28,6 +28,18 @@ constexpr std::array<std::uint8_t, 25> kSessionEstablishment{
     0x00, 0x00, 0x07, 0x50,                                 // seq 7, priority 5
     0x00, 0x3c, 0x00, 0x05, 0x00, 0x0a, 0x00, 0x00, 0x01};  // Node ID IPv4 10.0.0.1
 
+// Real traffic: Open5GS v2.7.7 SMF (172.22.0.7) -> UPF (172.22.0.8), captured on
+// the testbed addresses and cross-checked field-by-field against tshark 4.2.
+constexpr std::array<std::uint8_t, 30> kRealAssociationSetupRequest{
+    0x20, 0x05, 0x00, 0x1a, 0x00, 0x00, 0x01, 0x00, 0x00, 0x3c, 0x00, 0x05, 0x00, 0xac, 0x16,
+    0x00, 0x07, 0x00, 0x60, 0x00, 0x04, 0xee, 0xb1, 0x3d, 0xcf, 0x00, 0x59, 0x00, 0x01, 0x00,
+};
+constexpr std::array<std::uint8_t, 38> kRealAssociationSetupResponse{
+    0x20, 0x06, 0x00, 0x22, 0x00, 0x00, 0x01, 0x00, 0x00, 0x3c, 0x00, 0x05, 0x00,
+    0xac, 0x16, 0x00, 0x08, 0x00, 0x13, 0x00, 0x01, 0x01, 0x00, 0x60, 0x00, 0x04,
+    0xee, 0xb1, 0x3d, 0xcf, 0x00, 0x2b, 0x00, 0x04, 0x10, 0x21, 0x10, 0x04,
+};
+
 }  // namespace
 
 TEST(Pfcp, DecodesNodeMessage) {
@@ -106,4 +118,33 @@ TEST(Pfcp, UnknownTypeStillDecodes) {
     const auto r = pfcp::decode(bytes);
     ASSERT_TRUE(r.ok());
     EXPECT_EQ(pfcp::message_name(r.value().header.message_type), "Unknown");
+}
+
+TEST(PfcpRealCapture, AssociationSetupRequestFromOpen5gsSmf) {
+    const auto r = pfcp::decode(kRealAssociationSetupRequest);
+    ASSERT_TRUE(r.ok()) << prahari::to_string(r.error());
+    const auto& h = r.value().header;
+    EXPECT_EQ(pfcp::message_name(h.message_type), "AssociationSetupRequest");
+    EXPECT_FALSE(h.has_seid);
+    EXPECT_EQ(h.sequence, 1U);
+    ASSERT_EQ(r.value().body.size(), 22U);
+    // First IE is Node ID (type 60, len 5): IPv4 172.22.0.7, the SMF.
+    const auto body = r.value().body;
+    EXPECT_EQ(body[1], 60);
+    EXPECT_EQ(body[3], 5);
+    EXPECT_EQ(body[4], 0);  // Node ID type: IPv4
+    EXPECT_EQ(body[5], 172);
+    EXPECT_EQ(body[6], 22);
+    EXPECT_EQ(body[7], 0);
+    EXPECT_EQ(body[8], 7);
+}
+
+TEST(PfcpRealCapture, AssociationSetupResponseFromOpen5gsUpf) {
+    const auto r = pfcp::decode(kRealAssociationSetupResponse);
+    ASSERT_TRUE(r.ok()) << prahari::to_string(r.error());
+    const auto& h = r.value().header;
+    EXPECT_EQ(pfcp::message_name(h.message_type), "AssociationSetupResponse");
+    EXPECT_EQ(h.sequence, 1U);  // a response echoes the request's sequence
+    EXPECT_EQ(r.value().body.size(), 30U);
+    EXPECT_EQ(r.value().body[8], 8);  // Node ID ends in .8, the UPF
 }
