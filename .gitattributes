@@ -1,0 +1,8 @@
+# Force LF in the repo so shell scripts and configs survive Windows checkouts
+# (a CRLF or lost exec bit broke the e2e job in Tremor).
+* text=auto eol=lf
+*.sh text eol=lf
+*.bin binary
+*.pcap binary
+*.pcapng binary
+*.png binary

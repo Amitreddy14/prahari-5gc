@@ -1,0 +1,32 @@
+# Build output
+probe/build/
+build/
+*.o
+*.a
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Captures and datasets are large and may hold identities: never commit raw ones
+*.pcap
+*.pcapng
+data/raw/
+data/datasets/
+
+# Secrets
+.env
+*.key
+*.pem
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
