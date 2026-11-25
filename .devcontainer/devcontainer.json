@@ -1,0 +1,27 @@
+{
+  "name": "prahari-5gc",
+  "build": { "dockerfile": "../docker/dev.Dockerfile", "context": ".." },
+  "remoteUser": "dev",
+  "mounts": [
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+  ],
+  "postCreateCommand": "python3 -m venv .venv && .venv/bin/pip install -e './analytics[dev]'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cmake-tools",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "ms-python.mypy-type-checker",
+        "timonwong.shellcheck"
+      ],
+      "settings": {
+        "cmake.sourceDirectory": "${workspaceFolder}/probe",
+        "cmake.useCMakePresets": "always",
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "files.eol": "\n"
+      }
+    }
+  }
+}

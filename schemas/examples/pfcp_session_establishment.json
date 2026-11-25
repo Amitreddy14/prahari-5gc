@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "event_id": "5b0f6c2e-8f2a-4c4e-9d61-2f1f0a9b7c11",
+  "ts_ns": 1764064800123456789,
+  "interface": "N4",
+  "protocol": "PFCP",
+  "message": "SessionEstablishmentRequest",
+  "message_code": 50,
+  "direction": "request",
+  "src": { "ip": "172.22.0.7", "port": 8805, "nf": "SMF" },
+  "dst": { "ip": "172.22.0.8", "port": 8805, "nf": "UPF" },
+  "size_bytes": 25,
+  "decode_status": "ok",
+  "ue": { "seid": "42" },
+  "sequence": 7
+}

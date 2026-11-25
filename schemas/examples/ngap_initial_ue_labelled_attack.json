@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "event_id": "c3e7d1a4-1b6f-4f0e-8a3a-6d2b9e4f5a20",
+  "ts_ns": 1764064801000000000,
+  "interface": "N2",
+  "protocol": "NGAP",
+  "message": "InitialUEMessage",
+  "message_code": 15,
+  "direction": "indication",
+  "src": { "ip": "172.22.0.20", "port": 38412, "nf": "gNB" },
+  "dst": { "ip": "172.22.0.5", "port": 38412, "nf": "AMF" },
+  "size_bytes": 112,
+  "decode_status": "ok",
+  "ue": { "ran_ue_ngap_id": 1, "supi_hash": "9f86d081884c7d65" },
+  "labels": { "is_attack": true, "attack_id": "N2-01", "run_id": "storm-2026-11-25-a" }
+}
