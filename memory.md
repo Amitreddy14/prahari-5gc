@@ -2,6 +2,40 @@
 
 Newest first. Decisions, bugs, surprises and context that the code alone does not show.
 
+## 2026-11-25 — Phase 1 (testbed)
+
+**Decisions**
+- Pinned Open5GS **v2.7.7** (commit 318eeb49) and UERANSIM **v3.2.8** (commit ca1a66ff), the latest 2.7.x / 3.2.x tags; Dockerfiles verify the commit after cloning.
+- UERANSIM built with a direct CMake call: its makefile uses the CodeBlocks generator, which newer CMake drops.
+- No SCP: every NF talks to the NRF directly (`client.nrf`), fewer containers, NF→NF SBI traffic for the attacks.
+- Logs to stdout (no `logger.file`) so `docker compose logs` works.
+- SMF runs without freeDiameter (5G-only); Open5GS logs a harmless "No diameter configuration" warning.
+- NFs run as user `open5gs` with `no-new-privileges`; only UPF and UE get `NET_ADMIN` + `/dev/net/tun`.
+- Capture sidecar uses `network_mode: host` and a named bridge (`prahari-core`): a container on the bridge only sees its own unicast traffic.
+- UE pool 10.45.0.0/16 on the UPF's `ogstun`; smoke test pings 10.45.0.1 through `uesimtun0`.
+- Provisioning is idempotent (`replaceOne` + upsert, unique index on `imsi`) and BigInt-based (15-digit IMSIs exceed 2^53).
+
+**Verified in the build sandbox (Ubuntu 24.04, no SCTP, no IPv6)**
+- Built Open5GS v2.7.7 (3.5 min) and UERANSIM v3.2.8 (3.2 min) natively from the pinned tags.
+- Ran the real NFs with these exact configs on 172.22.0.x loopback aliases: NRF + AUSF/UDM/NSSF/BSF/SMF registered; SMF↔UPF **PFCP associated**; heartbeats flowing.
+- AMF reached NGAP socket creation (then needs SCTP); UDR/PCF reached DB connect (then need MongoDB); gNB reached SCTP connect; UE reached socket setup (then needs IPv6). So every config parses.
+- Captured the real PFCP exchange: probe decoder agreed with tshark on all 11 messages; two added as regression tests (18 tests total).
+- `docker compose config` valid; missing `.env` fails with a clear message.
+
+**Bugs / surprises**
+- Provisioning from a high IMSI base rolled over into a different MNC (001019999999999 + 1 → 00102…). Now an explicit error.
+- Docker Hub is blocked from the build sandbox, so the images themselves are first built on the dev laptop and in CI.
+- **First laptop build ran 1h45m without finishing.** The `build:` section sat in the shared `x-open5gs` anchor, so Compose compiled Open5GS once per NF (about 10 parallel builds) plus UERANSIM, each with `-j$(nproc)`, inside 8 GB of WSL2: swap thrash. Fix: only `nrf` builds the Open5GS image, only `gnb` builds UERANSIM, everyone else uses `pull_policy: never`; compile jobs capped by `BUILD_JOBS` (default 4); README builds images one at a time. Same root cause produced `pull access denied for prahari/ueransim` (the `ue` service tried to pull before `gnb` had built it).
+- With builds fixed, Open5GS compiled in 83 s on the laptop, then the `ldd` guard failed: 186 "not found" lines. Open5GS binaries have a RUNPATH but its `.so` files do not, so `ldd` on the libraries cannot find their siblings. Reproduced in the sandbox (186 → 0) and fixed by registering the lib dir in `/etc/ld.so.conf.d/open5gs.conf` + `ldconfig`. Lesson: the guard was never exercised before shipping; build-time checks need to be run too.
+
+**Verified on the dev laptop (Docker Desktop 29.9.3, WSL2 8 GB), 2026-11-25**
+- `scripts/smoke.sh` **6/6**: 13 services healthy; 10 subscribers provisioned; NG Setup over SCTP; 10/10 UEs registered with PDU sessions; ping UE → gNB → UPF (10.45.0.1); capture recorded N2=72, N4=68, SBI=760 packets.
+- Internet egress through the UPF NAT also works.
+- Capture via `network_mode: host` on bridge `prahari-core` works on Docker Desktop (the one piece the sandbox could not test).
+- Gotcha: `bash` typed in PowerShell is WSL's bash (no Docker); run scripts from Git Bash or `& "C:\Program Files\Git\bin\bash.exe" ...`. `smoke.sh` now fails fast with that hint.
+- Resource profile (`docs/results/testbed-profile.md`): **100/100 UEs registered**; whole testbed ≈ 425 MB RAM (MongoDB ≈ 190 MB, every NF < 45 MB, UE simulator 61 MB at 100 UEs), CPU near idle at steady state. Plenty of headroom for Phase 4 attack traffic on 8 GB WSL2.
+- Bug: `grep -c` prints `0` and exits 1 on no match, so `... || echo 0` produced `"0\n0"` and `[: integer expression expected` in `profile.sh` (smoke.sh had the same pattern). Fixed with a shared `ue_tunnels()` helper (`|| true` inside the container, digits-only, default 0).
+
 ## 2026-11-25 — Phase 0
 
 **Why this project exists.** Built for a C-DOT application: C-DOT ships India's

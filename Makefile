@@ -1,6 +1,7 @@
 # Run inside the dev container (VS Code: "Reopen in Container") or any Linux box.
 # Windows without make: the commands under each target work as-is in the container shell.
-.PHONY: help probe probe-asan probe-release tidy fuzz analytics lint check preflight clean
+.PHONY: help probe probe-asan probe-release tidy fuzz analytics lint check preflight clean \
+	testbed-up testbed-down testbed-smoke testbed-profile testbed-logs
 
 PY ?= python3
 FUZZ_SECONDS ?= 60
@@ -15,6 +16,11 @@ help:
 	@echo "lint           shellcheck + clang-format check"
 	@echo "check          Everything CI runs"
 	@echo "preflight      Can this Docker host run the 5G testbed?"
+	@echo "testbed-up     Build and start the 5G testbed (needs testbed/.env)"
+	@echo "testbed-smoke  End-to-end checks on the running testbed"
+	@echo "testbed-profile CPU/RAM per container at 10/50/100 UEs"
+	@echo "testbed-logs   Follow AMF, SMF, gNB and UE logs"
+	@echo "testbed-down   Stop the testbed (keeps the subscriber DB)"
 
 probe:
 	cd probe && cmake --preset debug && cmake --build --preset debug --parallel && ctest --preset debug
@@ -37,7 +43,7 @@ analytics:
 	cd analytics && ruff check . && ruff format --check . && mypy && pytest
 
 lint:
-	shellcheck scripts/*.sh
+	shellcheck scripts/*.sh testbed/scripts/*.sh testbed/docker/*.sh
 	find probe -path probe/build -prune -o \( -name '*.cpp' -o -name '*.hpp' \) -print | xargs clang-format --dry-run --Werror
 
 check: lint probe-asan probe-release tidy analytics
@@ -47,3 +53,21 @@ preflight:
 
 clean:
 	rm -rf probe/build
+
+testbed/.env:
+	cp testbed/.env.example testbed/.env
+
+testbed-up: testbed/.env
+	cd testbed && docker compose up -d --build
+
+testbed-smoke:
+	bash testbed/scripts/smoke.sh
+
+testbed-profile:
+	bash testbed/scripts/profile.sh
+
+testbed-logs:
+	cd testbed && docker compose logs -f amf smf gnb ue
+
+testbed-down:
+	cd testbed && docker compose down

@@ -119,7 +119,10 @@ prahari-5gc/
 | AUSF, UDM, UDR, PCF, NSSF, BSF | 172.22.0.11–16 | SBI 7777/tcp |
 | MongoDB | 172.22.0.30 | 27017 (internal only, no host port) |
 | gNB | 172.22.0.20 | NGAP client, GTP-U |
+| UE simulator (UERANSIM) | 172.22.0.21 | UEs ×N, `uesimtunN` interfaces |
+| Provisioning (one-shot) | 172.22.0.31 | — |
 | Attack injector | 172.22.0.40 | — |
+| Capture sidecar | host netns | tcpdump on bridge `prahari-core` |
 
 Kafka, Prometheus and Grafana live on a separate `obs` network; only the probe joins both.
 

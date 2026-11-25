@@ -1,0 +1,254 @@
+# Prahari-5GC testbed: Open5GS v2.7.7 5G SA core + UERANSIM v3.2.8 gNB/UEs.
+#
+#   cd testbed && cp .env.example .env && docker compose up -d --build
+#
+# Addressing and ports: Architecture.md section 6. Every NF has a fixed IP so the
+# probe can map IP -> network function. Nothing here publishes a host port.
+
+name: prahari
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+# Built once (by the nrf service below) and reused by every NF. Defining `build`
+# here would make Compose compile Open5GS once per service, in parallel.
+x-open5gs: &open5gs
+  image: prahari/open5gs:2.7.7
+  pull_policy: never
+  restart: unless-stopped
+  logging: *logging
+  security_opt: ["no-new-privileges:true"]
+  healthcheck: &sbi-health
+    # Healthy once the NF's SBI server accepts TCP on :7777.
+    test: ["CMD-SHELL", "nc -z $${NF_IP} 7777"]
+    interval: 3s
+    timeout: 2s
+    retries: 20
+    start_period: 3s
+
+x-after-nrf: &after-nrf
+  nrf: { condition: service_healthy }
+
+services:
+  mongo:
+    image: mongo:6.0
+    restart: unless-stopped
+    logging: *logging
+    command: ["--bind_ip", "172.22.0.30", "--quiet"]
+    volumes: [mongo-data:/data/db]
+    networks: { core: { ipv4_address: 172.22.0.30 } }
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--host", "172.22.0.30", "--eval", "db.adminCommand('ping').ok"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  provision:
+    image: mongo:6.0
+    restart: "no"
+    logging: *logging
+    entrypoint: ["mongosh", "--quiet", "mongodb://172.22.0.30/open5gs", "/provision/provision.js"]
+    environment:
+      PRAHARI_UE_COUNT: ${PRAHARI_UE_COUNT:-10}
+      PRAHARI_IMSI_BASE: ${PRAHARI_IMSI_BASE:-001010000000001}
+      SUBSCRIBER_K: ${SUBSCRIBER_K:?set SUBSCRIBER_K in testbed/.env}
+      SUBSCRIBER_OPC: ${SUBSCRIBER_OPC:?set SUBSCRIBER_OPC in testbed/.env}
+    volumes: [./provision:/provision:ro]
+    networks: { core: { ipv4_address: 172.22.0.31 } }
+    depends_on: { mongo: { condition: service_healthy } }
+
+  nrf:
+    <<: *open5gs
+    pull_policy: build
+    build:
+      context: ./docker
+      dockerfile: open5gs.Dockerfile
+      args: { BUILD_JOBS: "${BUILD_JOBS:-4}" }
+    command: ["open5gs-nrfd", "-c", "/etc/open5gs/nrf.yaml"]
+    environment: { NF_IP: 172.22.0.10 }
+    volumes: [./open5gs/nrf.yaml:/etc/open5gs/nrf.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.10 } }
+
+  ausf:
+    <<: *open5gs
+    command: ["open5gs-ausfd", "-c", "/etc/open5gs/ausf.yaml"]
+    environment: { NF_IP: 172.22.0.11 }
+    volumes: [./open5gs/ausf.yaml:/etc/open5gs/ausf.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.11 } }
+    depends_on: *after-nrf
+
+  udm:
+    <<: *open5gs
+    command: ["open5gs-udmd", "-c", "/etc/open5gs/udm.yaml"]
+    environment: { NF_IP: 172.22.0.12 }
+    volumes: [./open5gs/udm.yaml:/etc/open5gs/udm.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.12 } }
+    depends_on: *after-nrf
+
+  udr:
+    <<: *open5gs
+    command: ["open5gs-udrd", "-c", "/etc/open5gs/udr.yaml"]
+    environment: { NF_IP: 172.22.0.13 }
+    volumes: [./open5gs/udr.yaml:/etc/open5gs/udr.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.13 } }
+    depends_on:
+      nrf: { condition: service_healthy }
+      mongo: { condition: service_healthy }   # UDR exits at start-up without its DB
+
+  pcf:
+    <<: *open5gs
+    command: ["open5gs-pcfd", "-c", "/etc/open5gs/pcf.yaml"]
+    environment: { NF_IP: 172.22.0.14 }
+    volumes: [./open5gs/pcf.yaml:/etc/open5gs/pcf.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.14 } }
+    depends_on:
+      nrf: { condition: service_healthy }
+      mongo: { condition: service_healthy }   # PCF exits at start-up without its DB
+
+  nssf:
+    <<: *open5gs
+    command: ["open5gs-nssfd", "-c", "/etc/open5gs/nssf.yaml"]
+    environment: { NF_IP: 172.22.0.15 }
+    volumes: [./open5gs/nssf.yaml:/etc/open5gs/nssf.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.15 } }
+    depends_on: *after-nrf
+
+  bsf:
+    <<: *open5gs
+    command: ["open5gs-bsfd", "-c", "/etc/open5gs/bsf.yaml"]
+    environment: { NF_IP: 172.22.0.16 }
+    volumes: [./open5gs/bsf.yaml:/etc/open5gs/bsf.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.16 } }
+    depends_on: *after-nrf
+
+  upf:
+    <<: *open5gs
+    user: root                       # needs to create ogstun and set NAT rules
+    entrypoint: ["/usr/local/bin/upf-entrypoint.sh"]
+    command: []
+    environment: { NF_IP: 172.22.0.8, UE_POOL: 10.45.0.0/16, UE_GW: 10.45.0.1/16 }
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    sysctls: { net.ipv4.ip_forward: "1" }
+    volumes: [./open5gs/upf.yaml:/etc/open5gs/upf.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.8 } }
+    healthcheck:
+      test: ["CMD-SHELL", "ip link show ogstun >/dev/null && pgrep -x open5gs-upfd >/dev/null"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  smf:
+    <<: *open5gs
+    command: ["open5gs-smfd", "-c", "/etc/open5gs/smf.yaml"]
+    environment: { NF_IP: 172.22.0.7 }
+    volumes: [./open5gs/smf.yaml:/etc/open5gs/smf.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.7 } }
+    depends_on:
+      nrf: { condition: service_healthy }
+      upf: { condition: service_healthy }
+
+  amf:
+    <<: *open5gs
+    command: ["open5gs-amfd", "-c", "/etc/open5gs/amf.yaml"]
+    environment: { NF_IP: 172.22.0.5 }
+    volumes: [./open5gs/amf.yaml:/etc/open5gs/amf.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.5 } }
+    depends_on:
+      nrf: { condition: service_healthy }
+      ausf: { condition: service_healthy }
+      udm: { condition: service_healthy }
+      udr: { condition: service_healthy }
+      pcf: { condition: service_healthy }
+      nssf: { condition: service_healthy }
+      bsf: { condition: service_healthy }
+      smf: { condition: service_healthy }
+
+  gnb:
+    image: prahari/ueransim:3.2.8
+    pull_policy: build
+    build:
+      context: ./docker
+      dockerfile: ueransim.Dockerfile
+      args: { BUILD_JOBS: "${BUILD_JOBS:-4}" }
+    restart: unless-stopped
+    logging: *logging
+    security_opt: ["no-new-privileges:true"]
+    command: ["nr-gnb", "-c", "/etc/ueransim/gnb.yaml"]
+    volumes: [./ueransim/gnb.yaml:/etc/ueransim/gnb.yaml:ro]
+    networks: { core: { ipv4_address: 172.22.0.20 } }
+    depends_on: { amf: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x nr-gnb >/dev/null"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  ue:
+    image: prahari/ueransim:3.2.8   # built by the gnb service
+    pull_policy: never
+    restart: unless-stopped
+    logging: *logging
+    entrypoint: ["/usr/local/bin/ue-entrypoint.sh"]
+    environment:
+      PRAHARI_UE_COUNT: ${PRAHARI_UE_COUNT:-10}
+      PRAHARI_IMSI_BASE: ${PRAHARI_IMSI_BASE:-001010000000001}
+      SUBSCRIBER_K: ${SUBSCRIBER_K:?set SUBSCRIBER_K in testbed/.env}
+      SUBSCRIBER_OPC: ${SUBSCRIBER_OPC:?set SUBSCRIBER_OPC in testbed/.env}
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    volumes: [./ueransim/ue.yaml.tmpl:/etc/ueransim/ue.yaml.tmpl:ro]
+    networks: { core: { ipv4_address: 172.22.0.21 } }
+    depends_on:
+      gnb: { condition: service_healthy }
+      provision: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "ip link show uesimtun0 >/dev/null"]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+
+  capture:
+    image: prahari/capture:1
+    pull_policy: build
+    build:
+      context: ./docker
+      dockerfile: capture.Dockerfile
+    restart: unless-stopped
+    logging: *logging
+    # Host network namespace = the Docker VM, where the prahari-core bridge lives.
+    # A container on the bridge itself would only see its own traffic.
+    network_mode: host
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes: [./captures:/captures]
+    command:
+      - tcpdump
+      - -i
+      - prahari-core
+      - -n
+      - -U                  # flush each packet so files are readable while open
+      - -s
+      - "0"
+      - -Z
+      - root
+      - -G
+      - "${CAPTURE_ROTATE_SECONDS:-600}"
+      - -w
+      - /captures/core-%Y%m%dT%H%M%S.pcap
+      - sctp or (udp port 8805) or (tcp port 7777)
+    depends_on: { nrf: { condition: service_started } }
+
+networks:
+  core:
+    name: prahari-core
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: prahari-core
+    ipam:
+      config:
+        - subnet: 172.22.0.0/24
+          gateway: 172.22.0.1
+
+volumes:
+  mongo-data:

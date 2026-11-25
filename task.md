@@ -6,8 +6,8 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 
 | Phase | Name | Outcome | Status |
 |---|---|---|---|
-| 0 | Foundation | Docs, ADRs, threat model, probe + analytics skeletons, event contract, CI, dev container, preflight | 🔄 (awaiting your run + merge) |
-| 1 | Testbed | Open5GS + UERANSIM from pinned source in Compose; N UEs register, open PDU sessions, ping through UPF; captures on N2/N4/SBI | ⬜ |
+| 0 | Foundation | Docs, ADRs, threat model, probe + analytics skeletons, event contract, CI, dev container, preflight | ✅ tagged `phase-0` |
+| 1 | Testbed | Open5GS + UERANSIM from pinned source in Compose; N UEs register, open PDU sessions, ping through UPF; captures on N2/N4/SBI | 🔄 (awaiting your run + merge) |
 | 2 | Probe I: capture + PFCP | libpcap live/offline, Ethernet/SLL/IPv4/IPv6/UDP/SCTP, full PFCP IE walk, JSONL output, real-capture tests vs tshark, throughput benchmark | ⬜ |
 | 3 | Probe II: NGAP, NAS, SBI, Kafka | NGAP APER top-level + key IEs, plain NAS-5GS, HTTP/2 + HPACK, correlation tables, SUPI HMAC, Kafka producer, Prometheus metrics | ⬜ |
 | 4 | Attacks + dataset | 12-scenario injector with target allowlist, benign generator, labelled runs, Parquet dataset, dataset card | ⬜ |
@@ -28,16 +28,30 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 - ✅ 0.7 Analytics skeleton: pydantic event models, `supi_hash`, 17 contract tests
 - ✅ 0.8 CI: lint, probe ×3 (GCC debug/release, Clang ASan+UBSan+tidy), fuzz-smoke, analytics ×2 Pythons
 - ✅ 0.9 Dev container + Makefile + `scripts/check-host.sh`
-- ⬜ 0.10 **You:** run preflight on your laptop, push, open PR, CI green, merge, tag `phase-0`
+- ✅ 0.10 Preflight 5/5 on the dev laptop; PR #1 merged; tagged `phase-0`
 
-## Phase 1 — Testbed (next)
+## Phase 1 — Testbed
 
-- ⬜ 1.1 Dockerfiles: Open5GS v2.7.x and UERANSIM v3.2.x from pinned tags (multi-stage, non-root where possible)
-- ⬜ 1.2 Compose: `core` network 172.22.0.0/24 with fixed NF IPs, MongoDB internal-only, health checks
-- ⬜ 1.3 NF configs (AMF, SMF, UPF, NRF, AUSF, UDM, UDR, PCF, NSSF, BSF) for test PLMN 001/01
-- ⬜ 1.4 Subscriber provisioning script (N test IMSIs, keys from env, never committed)
-- ⬜ 1.5 gNB + UE configs; scale UEs by count
-- ⬜ 1.6 Capture sidecar: tcpdump on the bridge, rotating pcaps for N2/N4/SBI
-- ⬜ 1.7 Smoke test: all UEs registered, PDU sessions up, ping through `uesimtun0` to the UPF gateway
-- ⬜ 1.8 Resource profile: RAM/CPU per NF at 10/50/100 UEs on your laptop
-- ⬜ 1.9 Docs: testbed README, troubleshooting (SCTP, TUN, ports)
+- ✅ 1.1 Dockerfiles: Open5GS v2.7.7 and UERANSIM v3.2.8 from pinned tags, commit-verified, multi-stage, `ldd` guard, non-root NFs
+- ✅ 1.2 Compose: `prahari-core` bridge 172.22.0.0/24, fixed NF IPs, MongoDB internal-only, health-gated start order
+- ✅ 1.3 NF configs (NRF, AMF, SMF, UPF, AUSF, UDM, UDR, PCF, NSSF, BSF), test PLMN 001/01, direct NRF discovery (no SCP)
+- ✅ 1.4 Idempotent subscriber provisioning (`provision.js`), keys from `.env`, PLMN-overflow guard
+- ✅ 1.5 gNB config + UE template; UE count via `PRAHARI_UE_COUNT`
+- ✅ 1.6 Capture sidecar: tcpdump on the bridge, rotating pcaps (N2/N4/SBI only)
+- ✅ 1.7 `scripts/smoke.sh`: health, provisioning, NG Setup, N/N registrations, user-plane ping, capture coverage
+- ✅ 1.8 `scripts/profile.sh`: CPU/RAM per container at 10/50/100 UEs → `docs/results/testbed-profile.md`
+- ✅ 1.9 Testbed README with diagram, start order, troubleshooting
+- ✅ 1.10 CI: `testbed-config` (compose/YAML/JS) and `testbed-e2e` (build from source + smoke test, pcaps as artifact)
+- ✅ 1.11 Probe regression tests from real Open5GS PFCP traffic (Association Setup Request/Response)
+- ✅ 1.12 Smoke test 6/6 on the dev laptop (10 UEs)
+- ⬜ 1.13 **You:** run the profile (10/50 UEs), PR, CI green (incl. `testbed-e2e`), merge, tag `phase-1`
+
+## Phase 2 — Probe I: capture + PFCP (next)
+
+- ⬜ 2.1 pcap source (live interface + offline file) with libpcap, BPF filter, packet timestamps
+- ⬜ 2.2 L2/L3/L4: Ethernet, Linux SLL/SLL2, VLAN, IPv4, IPv6, UDP, SCTP (DATA chunk extraction)
+- ⬜ 2.3 PFCP IE walker + key IEs: Node ID, F-SEID, Cause, Recovery Time Stamp, Create/Update/Remove PDR/FAR (IDs)
+- ⬜ 2.4 Session table: SEID ↔ SMF/UPF peer, establishment → deletion lifecycle
+- ⬜ 2.5 Event builder: `SignallingEvent` v1 JSON, IP → NF mapping, sink to stdout/JSONL file
+- ⬜ 2.6 Real-capture tests: testbed pcaps vs tshark, field by field
+- ⬜ 2.7 Throughput benchmark (offline pcap, msgs/s, one core) and fuzz targets for every new decoder

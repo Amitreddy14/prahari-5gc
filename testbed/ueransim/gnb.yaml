@@ -1,0 +1,19 @@
+# Prahari-5GC testbed gNB (UERANSIM v3.2.8). Test PLMN 001/01, TAC 1.
+mcc: '001'
+mnc: '01'
+nci: '0x000000010'   # NR Cell Identity (36-bit)
+idLength: 32         # gNB ID length in bits
+tac: 1
+
+linkIp: 172.22.0.20  # radio-link simulation (UDP 4997) towards UEs
+ngapIp: 172.22.0.20  # N2: NGAP over SCTP to the AMF
+gtpIp: 172.22.0.20   # N3: GTP-U to the UPF
+
+amfConfigs:
+  - address: 172.22.0.5
+    port: 38412
+
+slices:
+  - sst: 1
+
+ignoreStreamIds: true
