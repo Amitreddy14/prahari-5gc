@@ -49,7 +49,9 @@ with a reason. Do not quietly break it.
 ## 5. Security and privacy (non-negotiable)
 
 - Never emit or log a SUPI/IMSI/SUCI in clear. Use `supi_hash` (HMAC-SHA256, key ≥ 16 bytes from env).
-- Never commit pcaps, datasets with identifiers, keys, or `.env`.
+- Never commit pcaps, datasets with identifiers, keys, or `.env`. The one exception is small
+  test fixtures in `probe/tests/data/` cut from the testbed, whose identities are synthetic
+  test-PLMN values, each documented in that folder's README.
 - Attack tooling targets only the local testbed. Injector refuses targets outside `172.22.0.0/24` (enforced in code, Phase 4).
 - Console/API: auth on every route, rate limiting, strict CORS, input validation, security headers, no debug mode outside dev.
 - No service binds to a host port unless it must; MongoDB and Kafka stay internal.

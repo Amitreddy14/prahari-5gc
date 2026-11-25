@@ -7,8 +7,8 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 | Phase | Name | Outcome | Status |
 |---|---|---|---|
 | 0 | Foundation | Docs, ADRs, threat model, probe + analytics skeletons, event contract, CI, dev container, preflight | ✅ tagged `phase-0` |
-| 1 | Testbed | Open5GS + UERANSIM from pinned source in Compose; N UEs register, open PDU sessions, ping through UPF; captures on N2/N4/SBI | 🔄 (awaiting your run + merge) |
-| 2 | Probe I: capture + PFCP | libpcap live/offline, Ethernet/SLL/IPv4/IPv6/UDP/SCTP, full PFCP IE walk, JSONL output, real-capture tests vs tshark, throughput benchmark | ⬜ |
+| 1 | Testbed | Open5GS + UERANSIM from pinned source in Compose; N UEs register, open PDU sessions, ping through UPF; captures on N2/N4/SBI | ✅ PR #2, CI green |
+| 2 | Probe I: capture + PFCP | libpcap live/offline, Ethernet/SLL/IPv4/IPv6/UDP/SCTP, full PFCP IE walk, JSONL output, real-capture tests vs tshark, throughput benchmark | 🔄 (awaiting your run + merge) |
 | 3 | Probe II: NGAP, NAS, SBI, Kafka | NGAP APER top-level + key IEs, plain NAS-5GS, HTTP/2 + HPACK, correlation tables, SUPI HMAC, Kafka producer, Prometheus metrics | ⬜ |
 | 4 | Attacks + dataset | 12-scenario injector with target allowlist, benign generator, labelled runs, Parquet dataset, dataset card | ⬜ |
 | 5 | Detection | Rules, Isolation Forest, sequence model; streaming scorer; evaluation harness and results table | ⬜ |
@@ -44,14 +44,27 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 - ✅ 1.10 CI: `testbed-config` (compose/YAML/JS) and `testbed-e2e` (build from source + smoke test, pcaps as artifact)
 - ✅ 1.11 Probe regression tests from real Open5GS PFCP traffic (Association Setup Request/Response)
 - ✅ 1.12 Smoke test 6/6 on the dev laptop (10 UEs)
-- ⬜ 1.13 **You:** run the profile (10/50 UEs), PR, CI green (incl. `testbed-e2e`), merge, tag `phase-1`
+- ✅ 1.13 Profile: 100/100 UEs, testbed ≈ 425 MB; PR #2 merged with all 10 CI jobs green
 
-## Phase 2 — Probe I: capture + PFCP (next)
+## Phase 2 — Probe I: capture + PFCP
 
-- ⬜ 2.1 pcap source (live interface + offline file) with libpcap, BPF filter, packet timestamps
-- ⬜ 2.2 L2/L3/L4: Ethernet, Linux SLL/SLL2, VLAN, IPv4, IPv6, UDP, SCTP (DATA chunk extraction)
-- ⬜ 2.3 PFCP IE walker + key IEs: Node ID, F-SEID, Cause, Recovery Time Stamp, Create/Update/Remove PDR/FAR (IDs)
-- ⬜ 2.4 Session table: SEID ↔ SMF/UPF peer, establishment → deletion lifecycle
-- ⬜ 2.5 Event builder: `SignallingEvent` v1 JSON, IP → NF mapping, sink to stdout/JSONL file
-- ⬜ 2.6 Real-capture tests: testbed pcaps vs tshark, field by field
-- ⬜ 2.7 Throughput benchmark (offline pcap, msgs/s, one core) and fuzz targets for every new decoder
+- ✅ 2.1 `PcapSource`: libpcap live (immediate mode, ns timestamps) and offline, BPF filters, clean SIGINT/SIGTERM stop
+- ✅ 2.2 L2–L4: Ethernet (+VLAN/QinQ), Linux SLL/SLL2, raw IP; IPv4 (padding trim), IPv6 (+ext headers); UDP; TCP (identify); SCTP bundled DATA chunks
+- ✅ 2.3 PFCP IE walker: grouped IEs (bounded depth), Node ID (IPv4/IPv6/FQDN), F-SEID, Cause, PDR/FAR groups and IDs, vendor IEs; User ID flagged only, never copied
+- ✅ 2.4 Session table: CP↔UP SEID linking keyed by receiver, establishing→active→deleted, unknown-session flag (N4-01 signal), bounded capacity, stale-establishment expiry
+- ✅ 2.5 Events: schema v1 + additive `pfcp` object; UUIDv4 (seedable), IP→NF map (testbed default or `--nf-map`), JSON Lines to stdout/file
+- ✅ 2.6 Real-capture verification: 1,342 PFCP messages vs tshark, 0 mismatches; 24-packet fixture committed; contract test validates real probe output in Python
+- ✅ 2.7 Bench ≈ 650k PFCP msgs/s on one 2.3 GHz core; 3 fuzzers, ~17M execs, 0 crashes (`docs/results/probe-phase2.md`)
+- ✅ 2.8 Probe container (non-root caps: NET_RAW + NET_ADMIN only) runs live on `prahari-core`; smoke test check 7 verifies its events
+- ⬜ 2.9 **You:** rebuild, smoke 7/7, PR, CI green (incl. `probe-contract`), merge, tag `phase-2`
+
+## Phase 3 — Probe II: NGAP, NAS, SBI, Kafka (next)
+
+- ⬜ 3.1 NGAP APER: NGAP-PDU choice, procedure code, criticality, ProtocolIE container; key IEs (RAN/AMF UE NGAP IDs, NAS-PDU, Global RAN Node ID, Cause)
+- ⬜ 3.2 NAS-5GS: security header handling; plain messages (Registration Request/Accept, Deregistration, PDU Session Establishment); SUCI/5G-GUTI handling
+- ⬜ 3.3 SUPI/SUCI pseudonymisation in C++ (HMAC-SHA256, key from env), byte-identical to `supi_hash` in Python
+- ⬜ 3.4 SBI: TCP stream reassembly (per flow, bounded), HTTP/2 frames, HPACK via nghttp2, method/path/status, NF-service mapping
+- ⬜ 3.5 UE correlation across N2 (NGAP IDs) and N4 (SEIDs) where the data allows
+- ⬜ 3.6 Kafka producer (librdkafka, `prahari.events.v1`), backpressure and drop counters; Kafka (KRaft) in compose
+- ⬜ 3.7 Prometheus metrics endpoint for the probe
+- ⬜ 3.8 Real-capture tests vs tshark for NGAP/NAS/SBI; fuzz targets for each decoder; benchmark

@@ -2,6 +2,34 @@
 
 Newest first. Decisions, bugs, surprises and context that the code alone does not show.
 
+## 2026-11-25 — Phase 2 (probe: capture + PFCP)
+
+**Decisions**
+- Real laptop captures drove the design: staged `testbed/captures/core-20261125T15{1133,2133}.pcap` (1,318 PFCP messages, 170 establishments, 80 deletions, 2,540 NGAP chunks).
+- PFCP header SEID is always the **receiver's** SEID (observed and per 29.244): 50 carries CP SEID in its F-SEID, 51 returns UP SEID in its F-SEID, later requests use UP SEID, responses CP SEID. Session table keys on (receiver IP, SEID) for both sides.
+- Schema v1 gained an optional `pfcp` object (cp_seid, up_seid, session_state, session_known, node_id, cause_code, ie_count, pdr_count, far_count). Additive, so still v1; `ue.seid` = UP SEID when known, else CP SEID.
+- PFCP User ID IE (141) carries IMSI + IMEI: only flagged present, never copied; a test asserts no IMSI reaches events.
+- FAR IDs also appear inside Create PDR as references; only FAR groups count as FARs.
+- Event IDs: UUIDv4 from mt19937_64 (unique, not secret); `--seed` makes output reproducible for tests/datasets.
+- Committed one 24-packet fixture (`probe/tests/data/n4-lifecycle.pcap`) with a README; `.gitignore` exception scoped to that folder; rule added to `rules.md`.
+- Probe container: `cap_drop: ALL`, `cap_add: NET_RAW, NET_ADMIN`, `no-new-privileges`, host network on `prahari-core`, JSONL to `testbed/events/`.
+- clang-tidy: disabled `cppcoreguidelines-owning-memory` (GSL-only) and `avoid-const-or-ref-data-members` (Pipeline's Sink& is deliberate); the rest fixed in code, with commented NOLINTs for bounded recursion and the signal-handler global.
+
+**Verified (sandbox)**
+- 1,342 PFCP messages vs tshark, field by field: 0 mismatches. SCTP NGAP chunk count identical (2,540).
+- 1,056 live-capture events valid against JSON Schema + pydantic; 100 sessions active = 100 UEs; 20 `session_known:false` = 10 sessions created before the capture file began.
+- 55 C++ tests pass under GCC debug/release and Clang ASan+UBSan; clang-tidy clean; 3 fuzzers ~17M execs, 0 crashes.
+- Bench ≈ 650k PFCP msgs/s (1.5 µs/msg incl. JSON) on one 2.3 GHz Xeon core.
+
+**Bugs caught**
+- ASan: a test decoded a temporary buffer, then read the Packet's payload span after the buffer died. Test fixed; lifetime rule documented on `decode_frame`.
+- `DLT_RAW` is 12 on Linux, so an explicit `case 12` duplicated it.
+- tshark `-c 1` with `-Y` stops after one *read* packet, not one match; use `head` instead.
+
+**Verified on the laptop**
+- Probe container builds and captures live on Docker Desktop (host netns, bridge `prahari-core`): 269 N4 events, all 10 sessions seen going active.
+- Smoke check 7 then failed on "1 of 269 events not decoded cleanly". That event was a **half-written last line** (`"decode_status":"` then EOF), not a decode error: stdio flushed its buffer mid-event while the smoke test read the file. Fix in the probe: `StreamSink` keeps its own buffer, stdio unbuffered, writes only whole lines (64 KB batches, plus a flush every 200 ms in live mode and on idle). New test asserts the file never ends mid-line after any write. Smoke test also counts only complete `{...}` lines.
+
 ## 2026-11-25 — Phase 1 (testbed)
 
 **Decisions**

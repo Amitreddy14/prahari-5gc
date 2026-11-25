@@ -7,10 +7,29 @@
   "message": "SessionEstablishmentRequest",
   "message_code": 50,
   "direction": "request",
-  "src": { "ip": "172.22.0.7", "port": 8805, "nf": "SMF" },
-  "dst": { "ip": "172.22.0.8", "port": 8805, "nf": "UPF" },
+  "src": {
+    "ip": "172.22.0.7",
+    "port": 8805,
+    "nf": "SMF"
+  },
+  "dst": {
+    "ip": "172.22.0.8",
+    "port": 8805,
+    "nf": "UPF"
+  },
   "size_bytes": 25,
   "decode_status": "ok",
-  "ue": { "seid": "42" },
-  "sequence": 7
+  "ue": {
+    "seid": "1886"
+  },
+  "sequence": 7,
+  "pfcp": {
+    "cp_seid": "1886",
+    "session_state": "establishing",
+    "session_known": true,
+    "node_id": "172.22.0.7",
+    "ie_count": 14,
+    "pdr_count": 4,
+    "far_count": 3
+  }
 }

@@ -16,8 +16,10 @@ __pycache__/
 # Captures and datasets are large and may hold identities: never commit raw ones
 *.pcap
 *.pcapng
+!probe/tests/data/*.pcap
 data/raw/
 data/datasets/
+testbed/events/
 
 # Secrets
 .env

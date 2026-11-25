@@ -67,6 +67,23 @@ pcap source ─▶ L2/L3/L4 parse ─▶ demux by port/proto ─┬─▶ PFCP d
                                        event builder ─▶ JSON ─▶ sink (stdout | file | Kafka)
 ```
 
+### N4 session table
+
+PFCP addresses every session message to the *receiver's* SEID, so one session has two
+identifiers and no single message carries both after setup. The probe links them:
+
+| Message | Header SEID | F-SEID IE | Table action |
+|---|---|---|---|
+| 50 Establishment Request (SMF→UPF) | 0 | CP SEID | create, `establishing` |
+| 51 Establishment Response (UPF→SMF) | CP SEID | UP SEID | link UP SEID, `active` |
+| 52/54 Modification/Deletion Request | UP SEID | — | look up by (UPF IP, UP SEID) |
+| 53/55 Responses | CP SEID | — | look up by (SMF IP, CP SEID); 55 accepted → `deleted` |
+
+Keys include the receiving node's IP, so the same SEID at two UPFs is two sessions.
+A request for a SEID the table never saw is emitted with `session_known: false`,
+the raw signal for attack N4-01 (spoofed deletion). Capacity is bounded and unanswered
+establishments expire after 30 s.
+
 Rules every decoder follows (enforced by `rules.md` and tests):
 
 - Input is a `std::span<const std::uint8_t>`; reads go through `ByteReader` (bounds-checked by construction).
