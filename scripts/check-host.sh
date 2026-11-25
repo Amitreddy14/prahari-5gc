@@ -9,6 +9,11 @@
 # Run from Git Bash, WSL, or the dev container (with the Docker socket mounted).
 set -euo pipefail
 
+# Git Bash (MSYS) rewrites Unix-looking arguments such as /dev/net/tun into
+# Windows paths before Docker sees them. Turn that off for this script.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL="*"
+
 IMAGE="python:3.12-slim"
 pass=0
 fail=0

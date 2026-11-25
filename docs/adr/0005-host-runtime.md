@@ -1,6 +1,6 @@
 # ADR-0005: Run on Docker Desktop (WSL2) with a preflight check
 
-- Status: Accepted (to be confirmed by the Phase 1 preflight on the dev laptop)
+- Status: Accepted. Confirmed 2026-11-25: preflight 5/5 on the dev laptop (Docker 29.9.3, WSL2 at 8 GB)
 - Date: 2026-11-25
 
 ## Context

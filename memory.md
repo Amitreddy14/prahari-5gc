@@ -32,5 +32,6 @@ Prahari sits where those meet.
 - PFCP fuzzer: ~3.5M executions in 30 s, no crashes.
 - Analytics: ruff, ruff format, mypy --strict clean; 17/17 tests pass.
 
-**Open questions for Phase 1**
-- Does Docker Desktop's WSL2 kernel on the dev laptop provide SCTP? (`make preflight` / `scripts/check-host.sh` answers this.)
+- Preflight on the dev laptop (Git Bash): SCTP OK, NET_ADMIN OK, but `/dev/net/tun` failed because MSYS path conversion rewrote `/dev/net/tun` into a Windows path. Fixed with `MSYS_NO_PATHCONV=1` in `check-host.sh`. Docker VM memory was 5 GiB; raised via `.wslconfig`.
+
+- Preflight re-run after both fixes: **5/5 passed** (Docker 29.9.3; SCTP, TUN, NET_ADMIN OK; Docker VM 7 GiB visible with `.wslconfig` memory=8GB, processors=8, swap=4GB). Primary runtime confirmed: Docker Desktop on WSL2, no fallback needed.
