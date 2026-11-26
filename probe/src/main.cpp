@@ -506,8 +506,8 @@ int cmd_decode_ngap(std::string_view hex) {
     if (m.ran_node_name) {
         std::cout << R"(,"ran_node_name":")" << *m.ran_node_name << '"';
     }
-    std::cout << R"(,"nas_pdu_count":)" << m.nas_pdus.size() << R"(,"size_bytes":)"
-              << m.size_bytes << "}\n";
+    std::cout << R"(,"nas_pdu_count":)" << m.nas_pdus.size() << R"(,"size_bytes":)" << m.size_bytes
+              << "}\n";
     return kExitOk;
 }
 

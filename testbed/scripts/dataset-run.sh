@@ -23,7 +23,12 @@ fi
 
 echo "Prahari-5GC dataset run: ${NAME} (spec ${SPEC})"
 dc --profile attack up -d --build attacker >/dev/null 2>&1 || true
-mkdir -p "runs/${NAME}"
+# The attacker container runs as root with every capability dropped except NET_RAW, so
+# (unlike normal root) it cannot write into a host directory it does not own. Make the
+# run directory world-writable so it can write manifests, labels and the Parquet there;
+# it holds nothing but disposable dataset output. (chmod is a harmless no-op on Windows.)
+mkdir -p "runs/${NAME}/manifests"
+chmod -R 777 "runs/${NAME}"
 
 # Fresh event log so the dataset holds only this campaign's traffic. The probe writes
 # events/events.jsonl as root, so truncate it from inside the probe container (the host
