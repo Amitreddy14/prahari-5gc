@@ -9,8 +9,8 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 | 0 | Foundation | Docs, ADRs, threat model, probe + analytics skeletons, event contract, CI, dev container, preflight | ✅ tagged `phase-0` |
 | 1 | Testbed | Open5GS + UERANSIM from pinned source in Compose; N UEs register, open PDU sessions, ping through UPF; captures on N2/N4/SBI | ✅ PR #2 merged, tagged `phase-1` |
 | 2 | Probe I: capture + PFCP | libpcap live/offline, Ethernet/SLL/IPv4/IPv6/UDP/SCTP, full PFCP IE walk, JSONL output, real-capture tests vs tshark, throughput benchmark | ✅ PR #3 merged, tagged `phase-2` |
-| 3a | Probe II: NGAP + NAS | NGAP APER + key IEs, NAS-5GS with per-UE NEA0 tracking, SUPI HMAC in C++, UE table, N2 fixture, fuzzers | 🔄 (awaiting your run + merge) |
-| 3b | Probe III: SBI, Kafka, metrics | HTTP/2 + HPACK, NF-service mapping, N2↔N4 correlation, Kafka producer, Prometheus metrics | ⬜ |
+| 3a | Probe II: NGAP + NAS | NGAP APER + key IEs, NAS-5GS with per-UE NEA0 tracking, SUPI HMAC in C++, UE table, N2 fixture, fuzzers | ✅ PR #4 merged, tagged `phase-3a` |
+| 3b | Probe III: SBI, Kafka, metrics | TCP reassembly, HTTP/2 + HPACK, 3GPP operation names, one UE pseudonym across N2/N4/SBI, Kafka producer + broker, Prometheus metrics | 🔄 (awaiting your run + merge) |
 | 4 | Attacks + dataset | 12-scenario injector with target allowlist, benign generator, labelled runs, Parquet dataset, dataset card | ⬜ |
 | 5 | Detection | Rules, Isolation Forest, sequence model; streaming scorer; evaluation harness and results table | ⬜ |
 | 6 | Adversarial robustness | Adaptive evasion attacks, measured degradation, hardening, paper-ready results | ⬜ |
@@ -72,12 +72,28 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 - ✅ 3a.9 Fuzzers `fuzz_ngap` + `fuzz_nas` seeded from real PDUs: 52.6M execs, 0 crashes; 75 tests on all presets; clang-tidy clean
 - ✅ 3a.10 Bench ≈ 450–520k msgs/s on N2 and N4 (`docs/results/probe-phase3a.md`)
 - ✅ 3a.11 Wiring: OpenSSL in CI + probe image, `PRAHARI_SUPI_KEY` via `.env`, smoke check 8 (N2 decode + no IMSI leak), Python contract test on the N2 fixture
-- ⬜ 3a.12 **You:** set `PRAHARI_SUPI_KEY`, rebuild probe, smoke 8/8, PR, CI green, merge, tag `phase-3a`
+- ✅ 3a.12 Smoke 8/8 on the laptop (10 N2 registrations, 10 pseudonyms, 0 IMSIs leaked); PR #4 merged with CI green; tagged `phase-3a`
 
-## Phase 3b — Probe III: SBI, Kafka, metrics (next)
+## Phase 3b — Probe III: SBI, Kafka, metrics
 
-- ⬜ 3b.1 SBI: TCP stream reassembly (per flow, bounded), HTTP/2 frames, HPACK via nghttp2, method/path/status, NF-service mapping
-- ⬜ 3b.2 UE correlation across N2 (NGAP IDs) and N4 (SEIDs) using SMF↔AMF SBI calls
-- ⬜ 3b.3 Kafka producer (librdkafka, `prahari.events.v1`), backpressure and drop counters; Kafka (KRaft) in compose
-- ⬜ 3b.4 Prometheus metrics endpoint for the probe
-- ⬜ 3b.5 Real-capture tests vs tshark for SBI; fuzz target; benchmark
+- ✅ 3b.1 TCP reassembly from the SYN: reordering, retransmission/overlap trimming, wraparound, FIN/RST, port reuse; bounded per direction and per probe
+- ✅ 3b.2 HTTP/2 frame parser (padding, CONTINUATION, SETTINGS table size, RST_STREAM) + nghttp2 HPACK inflater per direction; errors abandon the connection with one `malformed` event
+- ✅ 3b.3 SBI: 45 named 3GPP service operations, method/path/status/service/content type, ProblemDetails cause; identity path segments replaced, queries dropped, bodies never emitted
+- ✅ 3b.4 One pseudonym per UE across N2, N4 (PFCP User ID IE, kept per session) and SBI (path / request body / response body)
+- ✅ 3b.5 Real-capture verification: 2,871 + 2,871 SBI, 1,091 PFCP, 280 NGAP vs tshark, 0 mismatches, every SUPI-path pseudonym checked by HMAC; 240 KB SBI fixture committed
+- ✅ 3b.6 Kafka sink (librdkafka, idempotent, lz4, keyed by pseudonym, never blocks capture); KRaft broker + topic init in Compose; tested against librdkafka's mock cluster
+- ✅ 3b.7 Prometheus `/metrics` (snapshot published by the capture thread, minimal server thread)
+- ✅ 3b.8 Compose start order Kafka → probe/capture → NRF → NFs, so HPACK is decodable from the first byte
+- ✅ 3b.9 Fuzzers `fuzz_http2`, `fuzz_sbi`, `fuzz_sbi_flow` (whole pipeline): 0 crashes; 118 tests on all presets; clang-tidy clean
+- ✅ 3b.10 Bench ≈ 203k SBI / 371k N4 / 489k N2 msgs/s; faster SUPI hasher (pre-keyed EVP_MAC) (`docs/results/probe-phase3b.md`)
+- ✅ 3b.11 ADR-0007; smoke checks 10 (SBI decode, privacy, N2↔SBI linking) and 11 (Kafka offsets, metrics)
+- ⬜ 3b.12 **You:** `docker compose down`, rebuild probe, `up -d`, smoke 10/10, PR, CI green, merge, tag `phase-3b`
+
+## Phase 4 — Attacks + dataset (next)
+
+- ⬜ 4.1 Attack injector with a hard target allowlist (172.22.0.0/24), dry-run mode, and a run manifest
+- ⬜ 4.2 N2 attacks: registration storm, rogue gNB (NG Setup with forged identity), UE context release abuse
+- ⬜ 4.3 N4 attacks: spoofed session deletion / modification (unknown SEID), PFCP association hijack attempt
+- ⬜ 4.4 SBI attacks: rogue NF registration at the NRF, unauthorised NF discovery, UDM data harvesting
+- ⬜ 4.5 Benign traffic generator: UE churn, PDU sessions, idle periods
+- ⬜ 4.6 Labelled runs → Parquet dataset with a dataset card

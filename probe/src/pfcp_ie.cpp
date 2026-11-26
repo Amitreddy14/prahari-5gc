@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include "prahari/byte_reader.hpp"
+#include "prahari/plmn.hpp"
 
 namespace prahari::pfcp {
 
@@ -200,7 +201,8 @@ Result<bool> walk(std::span<const std::uint8_t> buf, int depth, std::uint16_t pa
                 }
                 break;
             case ie::kUserId:
-                s.has_user_id = true;  // presence only: contents may hold IMSI/IMEI
+                s.has_user_id = true;
+                s.user_id = e.value;  // a view; see Summary
                 break;
             default: break;
         }
@@ -250,6 +252,28 @@ Result<Summary> summarize(std::span<const std::uint8_t> body) {
         return ok.error();
     }
     return s;
+}
+
+std::optional<std::string> user_id_imsi(std::span<const std::uint8_t> value) {
+    ByteReader r{value};
+    const auto flags = r.u8();
+    if (!flags || (*flags & 0x01U) == 0) {
+        return std::nullopt;  // IMSIF not set
+    }
+    const auto len = r.u8();
+    if (!len || *len == 0 || *len > 8) {
+        return std::nullopt;
+    }
+    const auto bytes = r.bytes(*len);
+    if (!bytes) {
+        return std::nullopt;
+    }
+    auto digits = decode_bcd(*bytes);
+    if (digits.size() < 5 || digits.size() > 15 ||
+        digits.find_first_not_of("0123456789") != std::string::npos) {
+        return std::nullopt;
+    }
+    return digits;
 }
 
 std::string_view cause_name(std::uint8_t cause) noexcept {

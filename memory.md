@@ -2,6 +2,37 @@
 
 Newest first. Decisions, bugs, surprises and context that the code alone does not show.
 
+## 2026-11-26 — Phase 3b (probe: SBI, Kafka, metrics)
+
+**Decisions** (ADR-0007)
+- SBI decoded passively: own TCP reassembly + HTTP/2 frame parser, nghttp2 only for HPACK (one inflater per direction). Starts at a SYN; never resyncs mid-connection: HPACK dynamic-table references cannot be recovered, so a guess would be wrong output, not partial output.
+- Observed: Open5GS keeps NF-to-NF connections open for the NF's life (NRF heartbeats: the whole 45-min capture). So Compose now starts Kafka → probe + capture → NRF → NFs; restarting only the probe blinds SBI until `down && up`. Smoke check 10 says so.
+- Events named by 3GPP service operation (45 in a table; `nudr-dr` → DRQuery/DRCreate/…; fallback "METHOD service"). `sequence` = HTTP/2 stream ID; responses carry `message_code` = status and inherit the request's identity.
+- Privacy: path identity segments → `{supi}`/`{suci}`/`{gpsi}`/`{nai}`, query dropped, bodies never emitted. Null-scheme SUCI in the AMF→UDM path (`suci-0-001-01-…-<MSIN>`) was a real leak source, now resolved to the IMSI and hashed.
+- Cross-interface correlation is just the pseudonym: N2 (NAS SUCI), N4 (PFCP User ID IE, hashed at establishment and kept with the session), SBI (path → request body → response body). One key ⇒ one `supi_hash` per UE everywhere.
+- Kafka: librdkafka, idempotent, lz4, keyed by `supi_hash` (per-UE ordering), drop-and-count when the local queue is full (capture never blocks). Single-node KRaft broker on a separate `obs` bridge 172.23.0.0/24: the attack injector (172.22.0.40, Phase 4) cannot reach the monitoring pipeline. Not persistent; JSONL is the record.
+- Metrics: capture thread renders a Prometheus snapshot each second; a minimal server thread serves it on :9464. No counters shared across threads.
+
+**Verified (sandbox)**
+- Laptop capture (45 min, merged): 2,871 requests + 2,871 responses vs tshark, 0 mismatches; every SUPI-path request's pseudonym re-computed by HMAC in the cross-check; 10 IMSIs + 10 MSINs, 0 leaked. Same file: 1,091 PFCP, 280 NGAP, 0 mismatches.
+- One UE traceable N2 → SBI (AUSF/UDM/UDR/PCF/BSF/SMF) → N4 → SBI from a single pseudonym.
+- 118 tests on all presets; Kafka round-trip via librdkafka's in-process mock cluster (Apache mirrors and Maven are blocked in the sandbox); `/metrics` scraped over a real socket; clang-tidy clean.
+- Fuzz: http2 1.25M, sbi_flow 90k (whole pipeline from synthetic Ethernet frames), sbi 846k (aborts if an identity survives in a path), frame 7.95M: 0 crashes.
+- Bench (2.1 GHz, medians of 5): N2 489k, N4 372k, SBI 203k msgs/s.
+
+**Bugs caught**
+- `nghttp2_hd_inflate_del(nullptr)` segfaults (moved-from connection): guarded.
+- A SYN for a flow still marked open was treated as a retransmission, so a reused port after a lost FIN would stay undecoded for 30 min. Now only a SYN repeating the original ISN is a retransmission.
+- Bench replayed identical TCP sequence numbers into one pipeline (all "retransmissions"); now clears SBI flows per pass.
+- One-shot OpenSSL `HMAC()` re-fetched and re-keyed per call: N4 pseudonyms cost 13%. Pre-keyed `EVP_MAC` + dup: 8% on N4, SBI +20%.
+- KRaft `CLUSTER_ID` must be a 22-char base64 UUID, not a readable name.
+- Planned Kafka at 172.22.0.40 collided with the injector's reserved address; moved to the `obs` network as Architecture.md always intended.
+- Test assumptions corrected from data again: the N4 fixture's UEs are …010/…002/…008 (…008 is the N2 fixture UE); unkeyed N2 events in the fixture belong to other UEs bundled in the same SCTP packets.
+
+**Testbed finding**
+- At start-up 9/10 UEs' first authentication times out together (UDM→AUSF→AMF 504 at ~11.6 s); registration succeeds on retry ~20 s in. The re-registration wave has none. Baseline for Phase 5.
+
+
 ## 2026-11-26 — Phase 3a (probe: NGAP + NAS-5GS)
 
 **Decisions**

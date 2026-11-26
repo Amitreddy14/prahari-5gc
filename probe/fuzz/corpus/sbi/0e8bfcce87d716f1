@@ -1,0 +1,1 @@
+{"amfInstanceId":"bd0ec308-e94a-41f1-87ce-0751a88f4814","pei":"imeisv-4370816125816157","deregCallbackUri":"http://172.22.0.5:7777/namf-callback/v1/imsi-001010000000007/dereg-notify","initialRegistrationInd":true,"guami":{"plmnId":{"mcc":"001","mnc":"01"},"amfId":"020040"},"ratType":"NR"}

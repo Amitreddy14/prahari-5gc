@@ -4,9 +4,12 @@
 // A keyed hash is required: the IMSI space is small enough to brute-force SHA-256.
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+
+struct evp_mac_ctx_st;
 
 namespace prahari {
 
@@ -18,12 +21,15 @@ public:
     // `error`) when unset or shorter than kMinKeyBytes.
     [[nodiscard]] static std::optional<SupiHasher> from_env(const char* var, std::string& error);
 
-    explicit SupiHasher(std::string key) : key_(std::move(key)) {}
+    // Keys an HMAC-SHA256 context once; hash() clones it, so each call skips the
+    // algorithm lookup and key schedule (about 2x faster than one-shot HMAC()).
+    explicit SupiHasher(const std::string& key);
 
+    // Returns "" only if OpenSSL fails, which callers treat as "no pseudonym".
     [[nodiscard]] std::string hash(std::string_view supi) const;
 
 private:
-    std::string key_;
+    std::shared_ptr<evp_mac_ctx_st> keyed_;  // shared, read-only: copies stay cheap
 };
 
 }  // namespace prahari

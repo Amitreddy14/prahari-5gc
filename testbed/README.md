@@ -33,8 +33,8 @@ cp .env.example .env              # adjust PRAHARI_UE_COUNT if you like
 # then set PRAHARI_SUPI_KEY in .env, e.g. to the output of: openssl rand -hex 32
 docker compose build nrf          # Open5GS image, built once for all NFs (~5-10 min first time)
 docker compose build gnb capture  # UERANSIM + capture images (~5 min first time)
-docker compose build probe        # Prahari probe (~1 min)
-docker compose up -d
+docker compose build probe        # Prahari probe (~1-2 min)
+docker compose up -d              # Kafka -> probe + capture -> NRF -> the rest of the core
 bash scripts/smoke.sh             # end-to-end checks
 ```
 
@@ -49,7 +49,19 @@ A passing smoke test looks like:
   [ OK ] capture recording N2=... N4=... SBI=... packets in core-....pcap
   [ OK ] probe: ... N4 events, 10 sessions active, 0 decode errors
   [ OK ] probe: 10 N2 registrations decoded, 10 SUPIs pseudonymised, 0 IMSIs leaked
-Result: 8 passed, 0 failed
+  [ OK ] probe: ... SBI events, 10 AMF registrations, 10 UEs linked N2<->SBI
+  [ OK ] kafka: ... events in prahari.events.v1; metrics: ... delivered, 0 dropped
+Result: 10 passed, 0 failed
+```
+
+**Start order matters for SBI.** The core keeps its HTTP/2 connections open for its
+whole life, and their compressed headers (HPACK) can only be decoded from a
+connection's first byte. Compose therefore starts the probe before the core. If you
+rebuild or restart only the probe, its SBI view goes blind for connections that are
+already open (smoke check 10 tells you); restart everything instead:
+
+```bash
+docker compose down && docker compose up -d
 ```
 
 Useful commands:
@@ -64,6 +76,8 @@ Useful commands:
 | Resource profile | `bash scripts/profile.sh 10 50 100` → `docs/results/testbed-profile.md` |
 | Live probe events | `tail -f events/events.jsonl` |
 | UE pseudonyms seen | `grep -o '"supi_hash":"[0-9a-f]*"' events/events.jsonl \| sort -u` |
+| Events on Kafka (last 5) | `docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server 172.23.0.10:9092 --topic prahari.events.v1 --from-beginning --max-messages 5` |
+| Probe metrics | `docker compose exec probe bash -c 'exec 3<>/dev/tcp/127.0.0.1/9464; printf "GET /metrics HTTP/1.0\r\n\r\n" >&3; cat <&3'` |
 | Probe statistics | `docker compose restart probe && docker compose logs probe` (printed at stop) |
 | Stop (keep DB) | `docker compose down` |
 | Stop and wipe DB | `docker compose down -v` |
@@ -75,12 +89,13 @@ Captures land in `testbed/captures/` (git-ignored) and rotate every
 ## What starts when
 
 ```
+kafka ── kafka-init (topic) ── probe ─┐            (obs network 172.23.0.0/24)
+capture ──────────────────────────────┴─ nrf      (probe + capture in host netns)
 mongo ─┬─ provision (one-shot: N subscribers)
        ├─ udr ─┐
        └─ pcf ─┤
 nrf ──── ausf, udm, nssf, bsf ─┤
 upf ──── smf ──────────────────┴─ amf ── gnb ── ue (after provision succeeds)
-capture, probe (independent, host network)
 ```
 
 Health checks gate each arrow: SBI NFs are healthy once their HTTP/2 server

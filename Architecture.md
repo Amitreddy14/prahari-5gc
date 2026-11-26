@@ -65,7 +65,23 @@ pcap source ─▶ L2/L3/L4 parse ─▶ demux by port/proto ─┬─▶ PFCP d
                                        correlation tables (UE, SEID, stream)
                                                                           ▼
                                        event builder ─▶ JSON ─▶ sink (stdout | file | Kafka)
+                                                                          │
+                                       stats snapshot (1 s) ─▶ /metrics (Prometheus)
 ```
+
+### SBI: TCP, HTTP/2, HPACK
+
+| Layer | What the probe keeps per connection | Bounds |
+|---|---|---|
+| TCP | Next expected sequence per direction, out-of-order segments | 256 KiB / 128 segments per direction, 1 MiB ahead, 4096 flows, 30 min idle |
+| HTTP/2 | Partial frame, header block in progress, open streams (request kept until its response) | 1 MiB frame, 64 KiB header block, 1024 streams, 16 KiB of each body |
+| HPACK | One nghttp2 inflater per direction (dynamic table) | nghttp2 limits + SETTINGS_HEADER_TABLE_SIZE |
+
+Decoding starts at a SYN. A gap that cannot be filled, a framing error or an HPACK
+error abandons the connection (one `malformed` event); it is never resynchronised by
+guessing. Each completed request and response becomes one event named after its 3GPP
+service operation, with identity path segments replaced and the IMSI (from path or
+body) turned into the same `supi_hash` used on N2 and N4.
 
 ### N4 session table
 
@@ -142,7 +158,8 @@ prahari-5gc/
 
 | Network | Subnet | Purpose |
 |---|---|---|
-| `core` (Docker bridge) | 172.22.0.0/24 | All NFs, gNB, injector, capture |
+| `core` (Docker bridge `prahari-core`) | 172.22.0.0/24 | All NFs, gNB, UEs, injector |
+| `obs` (Docker bridge `prahari-obs`) | 172.23.0.0/24 | Kafka (later Prometheus, Grafana); unreachable from `core` |
 | UE pool (Open5GS `ogstun`) | 10.45.0.0/16 | IPs assigned to UEs' PDU sessions |
 
 | NF | IP | Ports |
@@ -158,8 +175,15 @@ prahari-5gc/
 | Provisioning (one-shot) | 172.22.0.31 | — |
 | Attack injector | 172.22.0.40 | — |
 | Capture sidecar | host netns | tcpdump on bridge `prahari-core` |
+| Probe | host netns | captures on `prahari-core`; Kafka client to 172.23.0.10; `/metrics` on 9464 |
+| Kafka (KRaft, single node) | 172.23.0.10 | 9092 (internal only); topic `prahari.events.v1`, 3 partitions |
+| Kafka topic init (one-shot) | 172.23.0.11 | — |
 
-Kafka, Prometheus and Grafana live on a separate `obs` network; only the probe joins both.
+Kafka, Prometheus and Grafana live on the separate `obs` network. The probe runs in the
+host network namespace, which sees both bridges, so it captures on `core` and produces
+to `obs` without joining either. Compose starts Kafka, then the probe and capture, then
+the NRF and the rest of the core (ADR-0007): SBI's HPACK can only be decoded from a
+connection's first byte.
 
 ## 7. Tech stack and why
 

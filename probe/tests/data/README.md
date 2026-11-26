@@ -41,3 +41,21 @@ Cross-checked against tshark 4.2 (`-o nas-5gs.null_decipher:TRUE`) with
 **Identities:** the SUCI carries test IMSI `001010000000008` in clear (null scheme),
 synthetic like the N4 fixture. Tests assert its MSIN never appears in probe output and
 that the probe and Python produce the same pseudonym for it with the test key.
+
+## sbi-registration.pcap
+
+1,122 TCP segments (240 KB) from the same testbed on 2026-11-26: the second
+registration wave, when all 10 UEs deregistered and registered again. Covers 11 HTTP/2
+connections opened inside the capture (so HPACK state is complete from the first
+byte): 320 requests + 320 responses, 25 service operations across AMF, SMF, AUSF, UDM,
+UDR, PCF and BSF. Pure-ACK segments were removed (the probe does not need them); every
+segment carrying data, SYN, FIN or RST is untouched.
+
+Cross-checked against tshark 4.2 (`-d tcp.port==7777,http2`): every request's stream,
+method and sanitised path and every response's status match; each request whose path
+holds a SUPI has the expected HMAC pseudonym.
+
+**Identities:** SUPIs `imsi-0010100000000xx` and null-scheme SUCIs appear in paths and
+JSON bodies, and AUSF/UDM bodies carry 5G-AKA vectors derived from the public UERANSIM
+example K/OPc. All synthetic test values. Tests assert none of the identities reaches
+probe output and that the 10 UEs get 10 pseudonyms, one shared with the N2 fixture.

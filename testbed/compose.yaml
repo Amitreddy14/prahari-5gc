@@ -4,6 +4,12 @@
 #
 # Addressing and ports: Architecture.md section 6. Every NF has a fixed IP so the
 # probe can map IP -> network function. Nothing here publishes a host port.
+#
+# Start order matters: Kafka -> probe + capture -> NRF -> other NFs. The core keeps
+# its HTTP/2 (SBI) connections open for its whole life, and HPACK can only be
+# decoded from a connection's first byte, so the probe must be watching before the
+# NFs connect. Restarting only the probe loses SBI decoding for connections that
+# are already open (counted as prahari_probe_sbi_midstream_segments_total).
 
 name: prahari
 
@@ -69,6 +75,10 @@ services:
     environment: { NF_IP: 172.22.0.10 }
     volumes: [./open5gs/nrf.yaml:/etc/open5gs/nrf.yaml:ro]
     networks: { core: { ipv4_address: 172.22.0.10 } }
+    # Every NF waits for the NRF, so this puts the probe in place before any SBI.
+    depends_on:
+      probe: { condition: service_started }
+      capture: { condition: service_started }
 
   ausf:
     <<: *open5gs
@@ -237,10 +247,63 @@ services:
       - -w
       - /captures/core-%Y%m%dT%H%M%S.pcap
       - sctp or (udp port 8805) or (tcp port 7777)
-    depends_on: { nrf: { condition: service_started } }
+
+  # Event bus. Single-node KRaft (no ZooKeeper), on its own `obs` bridge: nothing on
+  # the 5G core network (including the Phase 4 attack injector) can reach it. The
+  # probe, in the host netns, reaches it through the bridge.
+  # Not persistent by design: events/events.jsonl is the durable record.
+  kafka:
+    image: apache/kafka:3.9.1
+    restart: unless-stopped
+    logging: *logging
+    networks: { obs: { ipv4_address: 172.23.0.10 } }
+    environment:
+      CLUSTER_ID: 1SDUGR2rXTCCWNiWWPVUTg   # fixed 16-byte base64 UUID (KRaft storage format)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://172.23.0.10:9092,CONTROLLER://172.23.0.10:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://172.23.0.10:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@172.23.0.10:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # topics are created explicitly below
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 172.23.0.10:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 15s
+
+  kafka-init:
+    image: apache/kafka:3.9.1
+    restart: "no"
+    logging: *logging
+    networks: { obs: { ipv4_address: 172.23.0.11 } }
+    # 3 partitions keyed by UE pseudonym: each UE's events stay ordered.
+    command:
+      - /opt/kafka/bin/kafka-topics.sh
+      - --bootstrap-server
+      - 172.23.0.10:9092
+      - --create
+      - --if-not-exists
+      - --topic
+      - prahari.events.v1
+      - --partitions
+      - "3"
+      - --replication-factor
+      - "1"
+      - --config
+      - retention.ms=259200000
+    depends_on: { kafka: { condition: service_healthy } }
 
   probe:
-    image: prahari/probe:0.3.0
+    image: prahari/probe:0.4.0
     pull_policy: build
     build:
       context: ../probe
@@ -261,13 +324,27 @@ services:
       - --iface
       - prahari-core
       - --filter
-      - "udp port 8805 or sctp"
+      - "udp port 8805 or sctp or tcp port 7777"
       - --out
       - /events/events.jsonl
+      - --kafka-brokers
+      - 172.23.0.10:9092
+      # Host network inside the Docker VM: Prometheus (Phase 8, on obs) scrapes 172.23.0.1:9464.
+      - --metrics-listen
+      - 0.0.0.0:9464
       - --stats
-    depends_on: { nrf: { condition: service_started } }
+    depends_on: { kafka-init: { condition: service_completed_successfully } }
 
 networks:
+  obs:
+    name: prahari-obs
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: prahari-obs
+    ipam:
+      config:
+        - subnet: 172.23.0.0/24
+          gateway: 172.23.0.1
   core:
     name: prahari-core
     driver: bridge

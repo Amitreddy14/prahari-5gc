@@ -6,7 +6,9 @@
 # Checks, in order: every service healthy, subscribers provisioned, gNB connected
 # to the AMF (NG Setup), every UE registered with a PDU session, user-plane ping
 # through the UPF, the capture sidecar recording N2, N4 and SBI traffic, and the
-# probe decoding N4 (session tracking) and N2 (registrations, without leaking IMSIs).
+# probe decoding N4 (session tracking), N2 (registrations, without leaking IMSIs) and
+# SBI (HTTP/2, one pseudonym per UE across all three), Kafka receiving the events,
+# and the probe's Prometheus metrics.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"   # Git Bash: do not rewrite /paths
 
@@ -54,7 +56,7 @@ if [ -z "$(docker compose ps -q 2>/dev/null)" ]; then
 fi
 
 # 1. Health of long-running services.
-services=(mongo nrf ausf udm udr pcf nssf bsf upf smf amf gnb ue)
+services=(mongo kafka nrf ausf udm udr pcf nssf bsf upf smf amf gnb ue)
 all_healthy() {
     local s state
     for s in "${services[@]}"; do
@@ -174,6 +176,58 @@ if wait_for all_registered; then
     fi
 else
     bad "probe N2" "$(registrations)/${UE_COUNT} RegistrationRequests seen in ${events}"
+fi
+
+# 10. Probe: SBI (HTTP/2) decoded, identities replaced, same pseudonyms as N2.
+# HPACK needs each connection from its first byte; the core keeps them open, so this
+# only works if the probe started before the NFs (compose orders it that way).
+sbi_registrations() {
+    complete_events | grep '"interface":"SBI"' | grep '"direction":"request"' \
+        | grep -c '"message":"Amf3GppAccessRegistration"' || true
+}
+sbi_all() { [ "$(sbi_registrations)" -ge "${UE_COUNT}" ]; }
+if wait_for sbi_all; then
+    sbi_total="$(complete_events | grep -c '"interface":"SBI"' || true)"
+    sbi_bad="$(complete_events | grep '"interface":"SBI"' | grep -vc '"decode_status":"ok"' || true)"
+    raw_ids="$(complete_events | grep '"interface":"SBI"' | grep -cE 'imsi-[0-9]|suci-[0-9]' || true)"
+    n2_ues="$(complete_events | grep '"interface":"N2"' | grep -o '"supi_hash":"[0-9a-f]*"' | sort -u)"
+    sbi_ues="$(complete_events | grep '"interface":"SBI"' | grep -o '"supi_hash":"[0-9a-f]*"' | sort -u)"
+    shared="$(comm -12 <(printf '%s\n' "${n2_ues}") <(printf '%s\n' "${sbi_ues}") | grep -c . || true)"
+    if [ "${sbi_bad}" -ne 0 ]; then
+        bad "probe SBI decode" "${sbi_bad} of ${sbi_total} SBI events undecodable"
+    elif [ "${raw_ids}" -ne 0 ]; then
+        bad "probe SBI privacy" "${raw_ids} SBI events contain a raw imsi-/suci- identity"
+    elif [ -n "${SUPI_KEY}" ] && [ "${shared}" -lt "${UE_COUNT}" ]; then
+        bad "probe SBI correlation" "only ${shared}/${UE_COUNT} UE pseudonyms appear on both N2 and SBI"
+    else
+        ok "probe: ${sbi_total} SBI events, ${UE_COUNT} AMF registrations, ${shared} UEs linked N2<->SBI"
+    fi
+else
+    bad "probe SBI" "$(sbi_registrations)/${UE_COUNT} Amf3GppAccessRegistration requests seen. If the probe was restarted after the core, its SBI connections are mid-stream: docker compose down && docker compose up -d"
+fi
+
+# 11. Kafka holds the events, and the probe's metrics endpoint answers.
+kafka_events() {
+    dc exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server 172.23.0.10:9092 \
+        --topic prahari.events.v1 2>/dev/null | awk -F: '{s += $3} END {print s + 0}'
+}
+metrics() {
+    # The probe image has no curl; bash's /dev/tcp is enough for one GET.
+    dc exec -T probe bash -c 'exec 3<>/dev/tcp/127.0.0.1/9464 && printf "GET /metrics HTTP/1.0\r\n\r\n" >&3 && cat <&3' 2>/dev/null || true
+}
+metric() { metrics | awk -v m="$1" '$1 == m {print $2; exit}'; }
+in_kafka="$(kafka_events)"
+delivered="$(metric 'prahari_probe_kafka_messages_total{outcome="delivered"}')"
+dropped="$(metric 'prahari_probe_kafka_messages_total{outcome="dropped"}')"
+failed="$(metric 'prahari_probe_kafka_messages_total{outcome="failed"}')"
+if [ -z "${delivered}" ]; then
+    bad "probe metrics" "no answer on :9464/metrics (docker compose logs probe)"
+elif [ "${in_kafka:-0}" -le 0 ]; then
+    bad "kafka" "topic prahari.events.v1 is empty (docker compose logs kafka probe)"
+elif [ "${dropped:-0}" != "0" ] || [ "${failed:-0}" != "0" ]; then
+    bad "kafka delivery" "dropped=${dropped} failed=${failed} (delivered=${delivered})"
+else
+    ok "kafka: ${in_kafka} events in prahari.events.v1; metrics: ${delivered} delivered, 0 dropped"
 fi
 
 echo

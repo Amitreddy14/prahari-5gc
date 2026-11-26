@@ -3,8 +3,8 @@
 //
 // Supported: Ethernet II (+ 802.1Q / 802.1ad VLAN tags), Linux cooked v1 (SLL) and
 // v2 (SLL2), raw IP; IPv4 (options, first fragment only) and IPv6 (common extension
-// headers); UDP; SCTP common header + DATA chunks (RFC 9260). TCP is identified
-// but not reassembled (Phase 3).
+// headers); UDP; TCP header (sequence number + flags; reassembly lives in tcp_stream);
+// SCTP common header + DATA chunks (RFC 9260).
 #pragma once
 
 #include <array>
@@ -54,6 +54,9 @@ struct Packet {
     std::uint8_t ip_protocol{};
     std::uint16_t src_port{};
     std::uint16_t dst_port{};
+    // TCP only: sequence number and flags (FIN 0x01, SYN 0x02, RST 0x04, ACK 0x10).
+    std::uint32_t tcp_seq{};
+    std::uint8_t tcp_flags{};
     // UDP / TCP payload. Empty for SCTP (see sctp_data).
     std::span<const std::uint8_t> payload;
     std::vector<SctpData> sctp_data;  // SCTP may bundle several chunks per packet
@@ -67,5 +70,13 @@ struct Packet {
 
 inline constexpr std::uint32_t kPpidNgap = 60;
 inline constexpr std::uint16_t kPortPfcp = 8805;
+inline constexpr std::uint16_t kPortSbi = 7777;  // Open5GS SBI default (h2c)
+
+namespace tcp_flag {
+inline constexpr std::uint8_t kFin = 0x01;
+inline constexpr std::uint8_t kSyn = 0x02;
+inline constexpr std::uint8_t kRst = 0x04;
+inline constexpr std::uint8_t kAck = 0x10;
+}  // namespace tcp_flag
 
 }  // namespace prahari::net

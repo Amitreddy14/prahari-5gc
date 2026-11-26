@@ -50,9 +50,11 @@ class UeContext(_Strict):
 
 class SbiInfo(_Strict):
     method: HttpMethod | None = None
+    # Query stripped; identity segments replaced by {supi}/{suci}/{gpsi}/{nai}.
     path: Annotated[str, Field(max_length=256)] | None = None
     status: Annotated[int, Field(ge=100, le=599)] | None = None
     service: Annotated[str, Field(max_length=32)] | None = None
+    content_type: Annotated[str, Field(max_length=64)] | None = None
 
 
 SessionState = Literal["establishing", "active", "deleted", "unknown"]

@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "probe" / "tests" / "data"
 FIXTURE = DATA / "n4-lifecycle.pcap"
 N2_FIXTURE = DATA / "n2-registration.pcap"
+SBI_FIXTURE = DATA / "sbi-registration.pcap"
 PROBE = os.environ.get("PRAHARI_PROBE_BIN")
 # Test-only key; the N2 fixture's UE is IMSI 001010000000008.
 SUPI_KEY = "prahari-test-key-0123456789abcdef"
@@ -56,7 +57,9 @@ def n2_lines() -> list[str]:
     return run_probe(N2_FIXTURE, SUPI_KEY)
 
 
-@pytest.mark.parametrize(("pcap", "expected"), [(FIXTURE, 24), (N2_FIXTURE, 23)])
+@pytest.mark.parametrize(
+    ("pcap", "expected"), [(FIXTURE, 24), (N2_FIXTURE, 23), (SBI_FIXTURE, 640)]
+)
 def test_every_line_matches_schema_and_model(pcap: Path, expected: int) -> None:
     schema: dict[str, Any] = json.loads(
         (ROOT / "schemas" / "event.v1.schema.json").read_text(encoding="utf-8")
@@ -121,3 +124,26 @@ def test_without_a_key_supis_are_dropped_not_leaked() -> None:
         ue = SignallingEvent.from_json(line).ue
         assert ue is None or ue.supi_hash is None
     assert not any(FIXTURE_IMSI[5:] in line for line in out)
+
+
+def test_sbi_flow_is_named_paired_and_pseudonymous() -> None:
+    lines = run_probe(SBI_FIXTURE, SUPI_KEY)
+    events = [SignallingEvent.from_json(line) for line in lines]
+    assert all(e.interface == "SBI" and e.protocol == "HTTP2" for e in events)
+    requests = [e for e in events if e.direction == "request"]
+    responses = [e for e in events if e.direction == "response"]
+    assert len(requests) == len(responses) == 320
+    # Every response pairs with a request on the same connection and stream.
+    req_keys = Counter((str(e.src.ip), e.src.port, e.sequence) for e in requests)
+    res_keys = Counter((str(e.dst.ip), e.dst.port, e.sequence) for e in responses)
+    assert req_keys == res_keys
+    ops = Counter(e.message for e in requests)
+    assert ops["CreateSMContext"] == ops["N1N2MessageTransfer"] == 10
+    for e in events:
+        assert e.sbi is not None
+        assert "imsi-" not in (e.sbi.path or "")
+        assert "suci-" not in (e.sbi.path or "")
+    # The same UE pseudonym links SBI to the N2 fixture.
+    hashes = {e.ue.supi_hash for e in events if e.ue is not None and e.ue.supi_hash}
+    assert len(hashes) == 10
+    assert supi_hash(f"imsi-{FIXTURE_IMSI}", SUPI_KEY.encode()) in hashes
