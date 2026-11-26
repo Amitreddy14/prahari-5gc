@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(prahari_probe
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Passive 5G core signalling probe"
     LANGUAGES CXX)
 
@@ -22,6 +22,7 @@ configure_file(include/prahari/version.hpp.in
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PCAP REQUIRED IMPORTED_TARGET libpcap)
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 
 # Core library: every decoder lives here so tests and the CLI share one build.
 add_library(prahari_core
@@ -32,11 +33,16 @@ add_library(prahari_core
     src/session_table.cpp
     src/event.cpp
     src/pipeline.cpp
-    src/pcap_source.cpp)
+    src/pcap_source.cpp
+    src/plmn.cpp
+    src/ngap.cpp
+    src/nas.cpp
+    src/supi.cpp
+    src/ue_table.cpp)
 target_include_directories(prahari_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
-target_link_libraries(prahari_core PUBLIC PkgConfig::PCAP)
+target_link_libraries(prahari_core PUBLIC PkgConfig::PCAP OpenSSL::Crypto)
 prahari_set_warnings(prahari_core)
 
 add_executable(prahari-probe src/main.cpp)
@@ -60,7 +66,9 @@ if(PRAHARI_BUILD_TESTS)
         tests/test_pfcp_ie.cpp
         tests/test_session_table.cpp
         tests/test_event.cpp
-        tests/test_pipeline_capture.cpp)
+        tests/test_pipeline_capture.cpp
+        tests/test_ngap.cpp
+        tests/test_nas.cpp)
     target_compile_definitions(prahari_tests PRIVATE
         PRAHARI_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(prahari_tests PRIVATE prahari_core GTest::gtest GTest::gtest_main)
@@ -84,14 +92,17 @@ if(PRAHARI_BUILD_TESTS)
     set_tests_properties(cli_run_needs_input PROPERTIES WILL_FAIL TRUE)
     add_test(NAME cli_bench_fixture
              COMMAND prahari-probe bench --pcap ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/n4-lifecycle.pcap --repeat 10)
-    set_tests_properties(cli_bench_fixture PROPERTIES PASS_REGULAR_EXPRESSION "pfcp_msgs_per_sec")
+    set_tests_properties(cli_bench_fixture PROPERTIES PASS_REGULAR_EXPRESSION "\"pfcp_messages\":240,.*ns_per_signalling_msg")
+    add_test(NAME cli_bench_n2_fixture
+             COMMAND prahari-probe bench --pcap ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/n2-registration.pcap --repeat 10)
+    set_tests_properties(cli_bench_n2_fixture PROPERTIES PASS_REGULAR_EXPRESSION "\"ngap_messages\":230,")
 endif()
 
 if(PRAHARI_FUZZ)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "PRAHARI_FUZZ requires Clang")
     endif()
-    foreach(f fuzz_pfcp fuzz_pfcp_ie fuzz_frame)
+    foreach(f fuzz_pfcp fuzz_pfcp_ie fuzz_frame fuzz_ngap fuzz_nas)
         add_executable(${f} fuzz/${f}.cpp)
         target_link_libraries(${f} PRIVATE prahari_core)
         target_compile_options(${f} PRIVATE -fsanitize=fuzzer)

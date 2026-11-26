@@ -7,10 +7,42 @@
   "message": "InitialUEMessage",
   "message_code": 15,
   "direction": "indication",
-  "src": { "ip": "172.22.0.20", "port": 38412, "nf": "gNB" },
-  "dst": { "ip": "172.22.0.5", "port": 38412, "nf": "AMF" },
-  "size_bytes": 112,
+  "src": {
+    "ip": "172.22.0.20",
+    "port": 38412,
+    "nf": "gNB"
+  },
+  "dst": {
+    "ip": "172.22.0.5",
+    "port": 38412,
+    "nf": "AMF"
+  },
+  "size_bytes": 76,
   "decode_status": "ok",
-  "ue": { "ran_ue_ngap_id": 1, "supi_hash": "9f86d081884c7d65" },
-  "labels": { "is_attack": true, "attack_id": "N2-01", "run_id": "storm-2026-11-25-a" }
+  "ue": {
+    "ran_ue_ngap_id": 11,
+    "supi_hash": "538769f54627ac41"
+  },
+  "labels": {
+    "is_attack": true,
+    "attack_id": "N2-01",
+    "run_id": "storm-2026-11-25-a"
+  },
+  "ngap": {
+    "pdu_type": "initiating",
+    "procedure_code": 15,
+    "ie_count": 5
+  },
+  "nas": {
+    "epd": "5GMM",
+    "security_header": 0,
+    "integrity_protected": false,
+    "ciphered": false,
+    "decoded": true,
+    "message_type": 65,
+    "message": "RegistrationRequest",
+    "registration_type": "initial",
+    "identity_type": "SUCI",
+    "suci_null_scheme": true
+  }
 }

@@ -40,7 +40,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libgtest-dev libpcap-dev libnghttp2-dev librdkafka-dev \
+            ninja-build libgtest-dev libpcap-dev libssl-dev libnghttp2-dev librdkafka-dev \
             clang-18 clang-tidy-18 libclang-rt-18-dev
       - name: Configure
         working-directory: probe
@@ -62,15 +62,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build clang-18 libclang-rt-18-dev
-      - name: Install libpcap
-        run: sudo apt-get install -y --no-install-recommends libpcap-dev
+      - name: Install libpcap and OpenSSL
+        run: sudo apt-get install -y --no-install-recommends libpcap-dev libssl-dev
       - name: Build fuzzers
         working-directory: probe
         run: cmake --preset fuzz && cmake --build --preset fuzz
       - name: Fuzz each decoder (30 s each)
         working-directory: probe
         run: |
-          for f in pfcp pfcp_ie frame; do
+          for f in pfcp pfcp_ie frame ngap nas; do
             mkdir -p "build/fuzz/corpus-$f" && cp fuzz/corpus/$f/* "build/fuzz/corpus-$f/"
             ./build/fuzz/fuzz_$f -max_total_time=30 "build/fuzz/corpus-$f"
           done
@@ -86,7 +86,7 @@ jobs:
           echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ninja-build libgtest-dev libpcap-dev tshark
+            ninja-build libgtest-dev libpcap-dev libssl-dev tshark
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -94,9 +94,13 @@ jobs:
         working-directory: probe
         run: cmake --preset release && cmake --build --preset release --parallel
       - name: Cross-check against tshark
-        run: python3 probe/tools/crosscheck_tshark.py --probe probe/build/release/prahari-probe probe/tests/data/n4-lifecycle.pcap
+        run: |
+          python3 probe/tools/crosscheck_tshark.py --probe probe/build/release/prahari-probe \
+            probe/tests/data/n4-lifecycle.pcap probe/tests/data/n2-registration.pcap
       - name: Benchmark (informational)
-        run: probe/build/release/prahari-probe bench --pcap probe/tests/data/n4-lifecycle.pcap --repeat 20000
+        run: |
+          probe/build/release/prahari-probe bench --pcap probe/tests/data/n4-lifecycle.pcap --repeat 20000
+          probe/build/release/prahari-probe bench --pcap probe/tests/data/n2-registration.pcap --repeat 20000
       - name: Probe output satisfies the Python contract
         working-directory: analytics
         env:

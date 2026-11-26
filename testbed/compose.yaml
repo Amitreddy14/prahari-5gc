@@ -240,7 +240,7 @@ services:
     depends_on: { nrf: { condition: service_started } }
 
   probe:
-    image: prahari/probe:0.2.0
+    image: prahari/probe:0.3.0
     pull_policy: build
     build:
       context: ../probe
@@ -253,6 +253,9 @@ services:
     cap_add: [NET_RAW, NET_ADMIN]   # raw capture + promiscuous mode, nothing else
     security_opt: ["no-new-privileges:true"]
     volumes: [./events:/events]
+    environment:
+      # HMAC key for SUPI pseudonyms. Unset or short: the probe omits SUPIs entirely.
+      PRAHARI_SUPI_KEY: ${PRAHARI_SUPI_KEY:-}
     command:
       - run
       - --iface

@@ -30,6 +30,7 @@ Prerequisites: `bash scripts/check-host.sh` from the repo root passes 5/5.
 ```bash
 cd testbed
 cp .env.example .env              # adjust PRAHARI_UE_COUNT if you like
+# then set PRAHARI_SUPI_KEY in .env, e.g. to the output of: openssl rand -hex 32
 docker compose build nrf          # Open5GS image, built once for all NFs (~5-10 min first time)
 docker compose build gnb capture  # UERANSIM + capture images (~5 min first time)
 docker compose build probe        # Prahari probe (~1 min)
@@ -47,7 +48,8 @@ A passing smoke test looks like:
   [ OK ] user plane: UE -> gNB -> UPF ping to 10.45.0.1
   [ OK ] capture recording N2=... N4=... SBI=... packets in core-....pcap
   [ OK ] probe: ... N4 events, 10 sessions active, 0 decode errors
-Result: 7 passed, 0 failed
+  [ OK ] probe: 10 N2 registrations decoded, 10 SUPIs pseudonymised, 0 IMSIs leaked
+Result: 8 passed, 0 failed
 ```
 
 Useful commands:
@@ -61,6 +63,7 @@ Useful commands:
 | Change UE count | edit `.env`, then `docker compose up -d --force-recreate provision ue` |
 | Resource profile | `bash scripts/profile.sh 10 50 100` → `docs/results/testbed-profile.md` |
 | Live probe events | `tail -f events/events.jsonl` |
+| UE pseudonyms seen | `grep -o '"supi_hash":"[0-9a-f]*"' events/events.jsonl \| sort -u` |
 | Probe statistics | `docker compose restart probe && docker compose logs probe` (printed at stop) |
 | Stop (keep DB) | `docker compose down` |
 | Stop and wipe DB | `docker compose down -v` |

@@ -13,6 +13,8 @@
 #include "prahari/event.hpp"
 #include "prahari/net.hpp"
 #include "prahari/session_table.hpp"
+#include "prahari/supi.hpp"
+#include "prahari/ue_table.hpp"
 
 namespace prahari {
 
@@ -89,14 +91,22 @@ struct Stats {
     std::uint64_t tcp{};
     std::uint64_t sctp{};
     std::uint64_t sctp_data_chunks{};
-    std::uint64_t ngap_chunks{};  // PPID 60; decoded in Phase 3
+    std::uint64_t ngap_chunks{};  // SCTP DATA chunks with PPID 60
+    std::uint64_t ngap_messages{};
+    std::uint64_t ngap_decode_errors{};
+    std::uint64_t nas_messages{};
+    std::uint64_t nas_opaque{};  // ciphered with a non-null / unknown algorithm
+    std::uint64_t nas_decode_errors{};
+    std::uint64_t supi_hashed{};
+    std::uint64_t supi_not_hashed{};  // SUPI seen but no key configured: omitted
     std::uint64_t pfcp_messages{};
     std::uint64_t pfcp_decode_errors{};
     std::uint64_t pfcp_unknown_session{};
     std::uint64_t events{};
 };
 
-[[nodiscard]] std::string stats_json(const Stats& s, const pfcp::SessionTable& table);
+[[nodiscard]] std::string stats_json(const Stats& s, const pfcp::SessionTable& table,
+                                     const ngap::UeTable& ues);
 
 class Pipeline {
 public:
@@ -107,17 +117,24 @@ public:
 
     void on_frame(std::uint64_t ts_ns, net::LinkType link, std::span<const std::uint8_t> frame);
 
+    // Without a hasher, SUPIs are counted and dropped, never emitted.
+    void set_supi_hasher(std::optional<SupiHasher> h) { supi_ = std::move(h); }
+
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
     [[nodiscard]] const pfcp::SessionTable& sessions() const noexcept { return sessions_; }
+    [[nodiscard]] const ngap::UeTable& ues() const noexcept { return ues_; }
 
 private:
     void on_pfcp(std::uint64_t ts_ns, const net::Packet& pkt);
+    void on_ngap(std::uint64_t ts_ns, const net::Packet& pkt, std::span<const std::uint8_t> pdu);
     void emit(const Event& e);
 
     NfMap nf_map_;
     Sink& sink_;
     UuidGenerator uuids_;
     pfcp::SessionTable sessions_;
+    ngap::UeTable ues_;
+    std::optional<SupiHasher> supi_;
     Stats stats_;
     std::string line_;  // reused buffer
 };

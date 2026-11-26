@@ -2,6 +2,32 @@
 
 Newest first. Decisions, bugs, surprises and context that the code alone does not show.
 
+## 2026-11-26 — Phase 3a (probe: NGAP + NAS-5GS)
+
+**Decisions**
+- Phase 3 split in two: **3a** NGAP + NAS + SUPI pseudonyms (unlocks the N2 attacks: registration storm, rogue gNB); **3b** SBI/HTTP2 + Kafka + metrics.
+- NGAP decoded with a hand-written APER reader for the parts we need (length determinants, sized unsigned ints with 2-bit prefix for RAN IDs and 3-bit for 40-bit AMF IDs, GNB-ID bit-string packing). No asn1c dependency; unknown IEs are kept raw.
+- The testbed's Security Mode Command selects **NEA0** (enc 0, int 2), so after it every NAS message has security header 2/4 but a plaintext body. The probe stores the cipher per UE and decodes NEA0 bodies; any other cipher → `decoded: false`, never guessed.
+- SUPI pseudonym = first 64 bits of `HMAC-SHA256(key, "imsi-<IMSI>")`, matching Python `supi_hash` on the same string. Key from `PRAHARI_SUPI_KEY` (≥ 16 bytes). **No key → identities dropped**, not hashed with a default key.
+- UE table keyed on (gNB IP, RAN-UE-NGAP-ID); AMF ID linked later; pseudonym back-filled onto later messages; released on UEContextReleaseComplete.
+- Schema v1 gains optional `ngap` and `nas` objects; `ue.*` (ran/amf IDs, supi_hash, seid, pdu_session_id) replaces the flat `ue_seid`. Still additive → still v1.
+- Committed a second fixture, `n2-registration.pcap` (16 frames, 23 NGAP messages, one UE: IMSI 001010000000008). Its MSIN is in the fixture; the tests assert it never reaches probe output.
+- Bench output now reports per *signalling* message (PFCP + NGAP); the old `ns_per_pfcp_msg` printed `inf` (invalid JSON) on an N2-only capture.
+
+**Verified (sandbox)**
+- 2,682 NGAP messages (1,966 frames) + 1,342 PFCP vs tshark: 0 mismatches. 110 SUCI MSINs checked: 0 in probe output. 0 NAS messages opaque.
+- C++ and Python agree on the pseudonym (`1d99cf0c73e73e98` for the fixture UE with the test key).
+- 75 C++ tests on GCC debug/release and Clang ASan+UBSan; clang-tidy clean on `src/`.
+- `fuzz_ngap` 14.1M + `fuzz_nas` 38.5M execs (240 s each, seeded from real PDUs): 0 crashes.
+- Bench ≈ 450–520k msgs/s on N2 and N4 fixtures (2.1 GHz Xeon; slower host than Phase 2's).
+- New smoke check (N2 registrations ≥ UE count, no N2 decode errors, no opaque NAS, no raw IMSI in events, pseudonyms present when a key is set) dry-run on fixture output, including a planted-IMSI negative test.
+
+**Bugs caught**
+- tshark does not decode NEA0-"ciphered" NAS by default, which looked like probe mismatches; the oracle needs `-o nas-5gs.null_decipher:TRUE`.
+- IE 114 (UE-NGAP-IDs, inside UEContextReleaseCommand) was first unhandled, so release messages lost their UE IDs.
+- A test assumed the fixture UE was MSIN …02; the capture's UE is …08. Tests now take identities from the capture, not memory.
+- clang-tidy: `x = *opt` into an optional (round trip) in the NGAP ID decode; `reinterpret_cast` for OpenSSL replaced with a byte copy.
+
 ## 2026-11-25 — Phase 2 (probe: capture + PFCP)
 
 **Decisions**

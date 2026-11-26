@@ -2,7 +2,7 @@
 FROM ubuntu:24.04 AS build
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        g++ cmake ninja-build pkg-config libpcap-dev \
+        g++ cmake ninja-build pkg-config libpcap-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
@@ -15,9 +15,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 LABEL org.opencontainers.image.title="prahari-probe" \
       org.opencontainers.image.description="Passive 5G core signalling probe (PFCP/NGAP/SBI)" \
       org.opencontainers.image.source="https://github.com/Amitreddy14/prahari-5gc"
-RUN apt-get update && apt-get install -y --no-install-recommends libpcap0.8t64 \
+RUN apt-get update && apt-get install -y --no-install-recommends libpcap0.8t64 libssl3t64 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /build/prahari-probe /usr/local/bin/prahari-probe
+# The SUPI HMAC key arrives at run time via PRAHARI_SUPI_KEY; nothing secret is baked in.
 RUN ! { ldd /usr/local/bin/prahari-probe | grep "not found"; } \
     && prahari-probe --version
 ENTRYPOINT ["prahari-probe"]

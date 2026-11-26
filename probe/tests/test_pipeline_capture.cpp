@@ -9,6 +9,7 @@
 
 #include "prahari/pcap_source.hpp"
 #include "prahari/pipeline.hpp"
+#include "prahari/supi.hpp"
 
 namespace {
 
@@ -81,4 +82,37 @@ TEST(PipelineCapture, UserIdentityNeverAppearsInEvents) {
         EXPECT_FALSE(contains(l, "imsi")) << l;
         EXPECT_FALSE(contains(l, "001010000")) << l;  // test-PLMN IMSI prefix
     }
+}
+
+// N2: NG Setup, one UE's registration (with a failed first authentication), PDU
+// session setup, and a UE context release, from the live testbed.
+TEST(PipelineCapture, N2RegistrationFixture) {
+    const std::string fixture = std::string{PRAHARI_TEST_DATA_DIR} + "/n2-registration.pcap";
+    auto opened = prahari::PcapSource::open_file(fixture, "");
+    ASSERT_TRUE(opened.source) << opened.error;
+    prahari::VectorSink sink;
+    prahari::Pipeline p{prahari::NfMap::testbed_default(), sink, 1};
+    p.set_supi_hasher(prahari::SupiHasher{"prahari-test-key-0123456789abcdef"});
+    prahari::Frame f;
+    while (opened.source->next(f) == prahari::PcapSource::Next::kFrame) {
+        p.on_frame(f.ts_ns, opened.source->link(), f.data);
+    }
+    const auto& st = p.stats();
+    EXPECT_EQ(st.ngap_messages, 23U);
+    EXPECT_EQ(st.ngap_decode_errors, 0U);
+    EXPECT_EQ(st.nas_decode_errors, 0U);
+    EXPECT_EQ(st.nas_opaque, 0U);  // NEA0 learned from the Security Mode Command
+    EXPECT_EQ(st.supi_hashed, 1U);
+
+    int with_hash = 0;
+    for (const auto& l : sink.lines) {
+        EXPECT_FALSE(contains(l, "0000000008")) << "MSIN leaked (fixture UE): " << l;
+        EXPECT_FALSE(contains(l, "imsi")) << l;
+        if (contains(l, R"("ran_ue_ngap_id":1,)") &&
+            contains(l, R"("supi_hash":"1d99cf0c73e73e98")")) {
+            ++with_hash;
+        }
+    }
+    // Every later message of UE 1 inherits the hash from its Registration Request.
+    EXPECT_GE(with_hash, 10);
 }

@@ -44,7 +44,7 @@ TEST(Event, LargeSeidIsAString) {
     e.interface = "N4";
     e.protocol = "PFCP";
     e.message = "SessionDeletionRequest";
-    e.ue_seid = 18446744073709551615ULL;  // 2^64 - 1
+    e.ue.seid = 18446744073709551615ULL;  // 2^64 - 1
     std::string out;
     append_json(e, out);
     EXPECT_NE(out.find(R"("ue":{"seid":"18446744073709551615"})"), std::string::npos) << out;

@@ -84,6 +84,24 @@ A request for a SEID the table never saw is emitted with `session_known: false`,
 the raw signal for attack N4-01 (spoofed deletion). Capacity is bounded and unanswered
 establishments expire after 30 s.
 
+### N2 UE table and NAS ciphering
+
+NGAP identifies a UE by a pair of IDs that appear at different times: the gNB picks
+RAN-UE-NGAP-ID in InitialUEMessage, the AMF adds AMF-UE-NGAP-ID in its first downlink
+message. The probe keys the UE on (gNB IP, RAN-UE-NGAP-ID) and records the AMF ID when
+it appears.
+
+| Seen on N2 | UE table action |
+|---|---|
+| InitialUEMessage + Registration Request (SUCI, null scheme) | create; IMSI → `HMAC-SHA256(key, "imsi-…")` → `supi_hash`; IMSI discarded |
+| First downlink with AMF-UE-NGAP-ID | link AMF ID |
+| Security Mode Command (NAS) | store the selected cipher; NEA0 bodies stay decodable |
+| Any later message for the UE | copy `ran/amf_ue_ngap_id` and `supi_hash` into `ev.ue` |
+| UEContextReleaseComplete | remove |
+
+Without `PRAHARI_SUPI_KEY` (≥ 16 bytes) the probe drops identities rather than hash
+them with a guessable default. The table is bounded and entries idle for 1 h expire.
+
 Rules every decoder follows (enforced by `rules.md` and tests):
 
 - Input is a `std::span<const std::uint8_t>`; reads go through `ByteReader` (bounds-checked by construction).
