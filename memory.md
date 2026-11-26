@@ -2,6 +2,20 @@
 
 Newest first. Decisions, bugs, surprises and context that the code alone does not show.
 
+## 2026-11-27 — Phase 5a (detection: rules + evaluation harness)
+
+**Decisions**
+- **Identity-free detection is the core design call.** The dataset is labelled by the attacker IP (172.22.0.40: 1490 attack events, 3 benign), so any feature encoding source identity (IP, or NF-role from the fixed address map) leaks the label. All features/rules group *by* source entity but never use the identity — a rule fires on behaviour, so it would flag a compromised real NF too. This is the credibility of the whole result; don't regress it in 5b.
+- Rules (`detect/rules.py`), all causal (run as a streaming detector unchanged): `malformed_decode` (decode_status != ok), `pfcp_unknown_session` (probe's `pfcp.session_known == False` — N4-01/02), `ngap_unknown_gnb` (gNB id not in benign baseline — N2-02), `sbi_unknown_operation` (SBI request with no recognised service — SBI-04), per-message-type `rate_*` (benign never bursts these from one source; threshold learned from benign).
+- Harness (`detect/eval.py`, `prahari-detect`): calibrate on benign in first 40% of timeline (never sees attack labels), measure FP on held-out benign. Detector-agnostic (calibrate/reset/score protocol) so 5b models reuse it.
+
+**Measured (`prahari-dataset-v1`)**: 8/9 attacks detected, precision 1.000, F1 0.644, 0% held-out FP, ≤0.3s latency.
+- Per-event recall (~0.47) understates detection: the labeller marks both directions, so victim NF *responses* are attack-labelled but correctly not flagged. Request-level recall is high (N4-01 100%, N4-03 95%).
+- **SBI-02 (rogue NF registration) undetected — honest blind spot.** It's well-formed NFRegister/NFUpdate against a benign stream with 3758 NFUpdate; needs NF-identity allowlisting (auth), not anomaly detection.
+- 0% FP is partly because the benign generator is narrow (benign & attack share only 4 of ~70 message types; no registration storms / SEID scans in normal ops). Stated as a limitation; cross-campaign eval + richer benign is 5b.
+
+**Bug**: first rules pass filtered rate rules on `direction == "request"`, but NGAP `InitialUEMessage`/`UEContextReleaseRequest` are "indication" → N2-01 recall was 0.2%. Message *name* already distinguishes request types from their responses, so the direction filter was removed.
+
 ## 2026-11-26 — Phase 4b (N2 attacks, benign traffic, labelled dataset)
 
 **Decisions** (ADR-0009)

@@ -13,7 +13,8 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 | 3b | Probe III: SBI, Kafka, metrics | TCP reassembly, HTTP/2 + HPACK, 3GPP operation names, one UE pseudonym across N2/N4/SBI, Kafka producer + broker, Prometheus metrics | ✅ PR #5 merged, tagged `phase-3b` |
 | 4a | Attacks I: injector, N4 + SBI, labels | Allowlisted injector, 8 N4/SBI scenarios validated on real Open5GS, run manifests, exact labeller, attacker container | ✅ |
 | 4b | Attacks II: N2 + dataset | Rogue gNB, registration storm, forged release, malformed NGAP; benign generator; campaign runner; labelled runs → Parquet + dataset card | 🔄 (awaiting your run + merge) |
-| 5 | Detection | Rules, Isolation Forest, sequence model; streaming scorer; evaluation harness and results table | ⬜ |
+| 5a | Detection I: rules + harness | Identity-free behavioural rules, evaluation harness, measured results (8/9 attacks, P=1.00, 0% FP) | 🔄 (awaiting your merge) |
+| 5b | Detection II: ML layers | Isolation Forest + sequence model on the same harness; streaming scorer; cross-campaign splits | ⬜ |
 | 6 | Adversarial robustness | Adaptive evasion attacks, measured degradation, hardening, paper-ready results | ⬜ |
 | 7 | LLM triage | Local-LLM agent, 3GPP notes KB, schema-validated output, faithfulness eval | ⬜ |
 | 8 | SOC console | FastAPI (auth, rate limits) + React timeline, drill-down, session ladder; Grafana ops dashboard | ⬜ |
@@ -110,4 +111,18 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 - ✅ 4b.4 Campaign runner (`prahari-campaign`): benign traffic + a timed attack schedule, one `campaign.json` tying the run manifests together
 - ✅ 4b.5 Dataset build (`prahari-dataset`): labelled events → typed Parquet (40 columns) + Markdown dataset card; `scripts/dataset-run.sh`; CI asserts a non-empty, attack-labelled Parquet
 - ✅ 4b.6 ADR-0009; `docs/results/attacks-phase4b.md`; threat-model N2 note; probe 0.6.0, attacker 0.2.0, analytics 0.1.0, attacks 0.2.0
-- ⬜ 4b.7 **You:** copy `ci.yml`/`Makefile`, rebuild probe (0.6.0), `smoke.sh` 10/10, `attack-check.sh` (now +N2), `dataset-run.sh`, PR, CI green, merge, tag `phase-4b`
+- ✅ 4b.7 Rebuilt, smoke 10/10, attack-check +N2 green, dataset-run built 12,015-row Parquet, PR #7 CI green, merged
+
+## Phase 5a — Detection I: rules + evaluation harness
+
+- ✅ 5a.1 Identity-free behavioural features (`detect/features.py`): per-event features + sliding-window rate/fan-out trackers; the source address is a grouping key, never a feature (the label is derived from it)
+- ✅ 5a.2 Rules engine (`detect/rules.py`): `malformed_decode`, `pfcp_unknown_session`, `ngap_unknown_gnb`, `sbi_unknown_operation`, per-message-type `rate_*`; thresholds calibrated from benign only, causal (runs as a streaming detector unchanged)
+- ✅ 5a.3 Evaluation harness (`detect/eval.py`, `prahari-detect`): calibrate on benign-train, measure FP on held-out benign; per-run detection + latency, per-attack recall, overall P/R/F1; Markdown results table
+- ✅ 5a.4 Measured on `prahari-dataset-v1`: **8/9 attacks detected, precision 1.000, F1 0.644, 0% held-out FP**, ≤0.3 s latency; SBI-02 (rogue NF registration) is an honest behavioural blind spot (needs identity allowlisting). `docs/results/detection-phase5a.md`
+- ⬜ 5a.5 **You:** branch, commit, PR, CI green, merge, tag `phase-5a`
+
+## Phase 5b — Detection II: ML layers (next)
+
+- ⬜ 5b.1 Isolation Forest on windowed behavioural features; same harness
+- ⬜ 5b.2 Sequence model (per-UE/per-session message sequences, LSTM or small transformer)
+- ⬜ 5b.3 Layer fusion + streaming scorer; cross-campaign train/test splits (needs 2–3 more campaigns, varied seeds)

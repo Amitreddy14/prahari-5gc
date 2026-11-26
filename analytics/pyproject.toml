@@ -27,6 +27,7 @@ dev = [
 [project.scripts]
 prahari-label = "prahari_analytics.labels:main"
 prahari-dataset = "prahari_analytics.dataset:main"
+prahari-detect = "prahari_analytics.detect.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/prahari_analytics"]
