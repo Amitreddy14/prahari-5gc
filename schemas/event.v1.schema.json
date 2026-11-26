@@ -78,7 +78,8 @@
     "size_bytes": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 65535
+      "maximum": 4294967295,
+      "description": "Bytes on the wire for this message: PDU length for PFCP/NGAP; HTTP/2 header block plus body for SBI (bodies can be large)"
     },
     "decode_status": {
       "enum": [

@@ -2,7 +2,7 @@
 # Windows without make: the commands under each target work as-is in the container shell.
 .PHONY: help probe probe-asan probe-release tidy fuzz analytics lint check preflight clean \
 	testbed-up testbed-down testbed-smoke testbed-profile testbed-logs \
-	bench crosscheck probe-events
+	bench crosscheck probe-events attacks
 
 PY ?= python3
 FUZZ_SECONDS ?= 60
@@ -17,6 +17,7 @@ help:
 	@echo "crosscheck     Probe vs tshark, field by field, on CROSSCHECK_PCAPS (all fixtures)"
 	@echo "probe-events   Follow live probe events from the running testbed"
 	@echo "analytics      ruff + mypy + pytest for the Python package"
+	@echo "attacks        ruff + mypy + pytest for the attack injector"
 	@echo "lint           shellcheck + clang-format check"
 	@echo "check          Everything CI runs"
 	@echo "preflight      Can this Docker host run the 5G testbed?"
@@ -61,6 +62,9 @@ probe-events:
 analytics:
 	cd analytics && ruff check . && ruff format --check . && mypy && pytest
 
+attacks:
+	cd attacks && ruff check . && ruff format --check . && mypy && pytest
+
 analytics-contract: probe-release
 	cd analytics && PRAHARI_PROBE_BIN=../probe/build/release/prahari-probe pytest tests/test_probe_output.py
 
@@ -68,7 +72,7 @@ lint:
 	shellcheck scripts/*.sh testbed/scripts/*.sh testbed/docker/*.sh
 	find probe -path probe/build -prune -o \( -name '*.cpp' -o -name '*.hpp' \) -print | xargs clang-format --dry-run --Werror
 
-check: lint probe-asan probe-release tidy analytics analytics-contract crosscheck
+check: lint probe-asan probe-release tidy analytics analytics-contract attacks crosscheck
 
 preflight:
 	bash scripts/check-host.sh

@@ -45,6 +45,20 @@ Each scenario has an ID used as `labels.attack_id` in datasets.
 Phase 4 implements the full catalogue. Each scenario has parameters (rate,
 duration, number of targets, stealth knobs) recorded with every run.
 
+### Observed against Open5GS v2.7.7 (Phase 4a)
+
+Measured, not assumed (details: `docs/results/attacks-phase4a.md`):
+
+- **N4**: the UPF accepts a PFCP association from any node, creates sessions for it,
+  and does not check that a Session Modification/Deletion comes from the session's
+  owner. SEIDs are random but drawn from ~1-4096, so a blind scan spoofed as the SMF
+  deletes every live session in seconds. A sustained ~1,000 PFCP msg/s aborts the UPF
+  (CVE-2026-106807). Association Release from the CP side is not implemented (N4-04
+  `release` fails).
+- **SBI**: no authentication on the NRF. Discovery filtering trusts the claimed
+  requester type, NFRegister of a rogue NF succeeds and is returned by discovery, and
+  deregistering a real NF hides it until its next heartbeat (~8 s).
+
 ## 4. Benign traffic profile
 
 To keep false-alarm numbers honest, the benign generator mixes: UE power-on

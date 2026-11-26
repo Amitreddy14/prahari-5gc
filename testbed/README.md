@@ -64,6 +64,18 @@ already open (smoke check 10 tells you); restart everything instead:
 docker compose down && docker compose up -d
 ```
 
+**Attacks (Phase 4).** The injector runs in its own container at 172.22.0.40, only when
+asked for (`--profile attack`), and refuses any address outside 172.22.0.0/24. After the
+smoke test, `bash scripts/attack-check.sh` runs the non-destructive scenarios and checks
+that the probe captured them and the labeller attributed every one. Manifests and
+labelled events land in `runs/` (git-ignored). See `attacks/README.md`.
+
+```bash
+docker compose --profile attack up -d --build attacker
+docker compose exec attacker prahari-attack list
+bash scripts/attack-check.sh
+```
+
 Useful commands:
 
 | Task | Command |

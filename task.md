@@ -10,8 +10,9 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 | 1 | Testbed | Open5GS + UERANSIM from pinned source in Compose; N UEs register, open PDU sessions, ping through UPF; captures on N2/N4/SBI | ✅ PR #2 merged, tagged `phase-1` |
 | 2 | Probe I: capture + PFCP | libpcap live/offline, Ethernet/SLL/IPv4/IPv6/UDP/SCTP, full PFCP IE walk, JSONL output, real-capture tests vs tshark, throughput benchmark | ✅ PR #3 merged, tagged `phase-2` |
 | 3a | Probe II: NGAP + NAS | NGAP APER + key IEs, NAS-5GS with per-UE NEA0 tracking, SUPI HMAC in C++, UE table, N2 fixture, fuzzers | ✅ PR #4 merged, tagged `phase-3a` |
-| 3b | Probe III: SBI, Kafka, metrics | TCP reassembly, HTTP/2 + HPACK, 3GPP operation names, one UE pseudonym across N2/N4/SBI, Kafka producer + broker, Prometheus metrics | 🔄 (awaiting your run + merge) |
-| 4 | Attacks + dataset | 12-scenario injector with target allowlist, benign generator, labelled runs, Parquet dataset, dataset card | ⬜ |
+| 3b | Probe III: SBI, Kafka, metrics | TCP reassembly, HTTP/2 + HPACK, 3GPP operation names, one UE pseudonym across N2/N4/SBI, Kafka producer + broker, Prometheus metrics | ✅ PR #5 merged, tagged `phase-3b` |
+| 4a | Attacks I: injector, N4 + SBI, labels | Allowlisted injector, 8 N4/SBI scenarios validated on real Open5GS, run manifests, exact labeller, attacker container | 🔄 (awaiting your run + merge) |
+| 4b | Attacks II: N2 + dataset | Rogue gNB, registration storm, forged release, malformed NGAP; benign generator; labelled runs → Parquet + dataset card | ⬜ |
 | 5 | Detection | Rules, Isolation Forest, sequence model; streaming scorer; evaluation harness and results table | ⬜ |
 | 6 | Adversarial robustness | Adaptive evasion attacks, measured degradation, hardening, paper-ready results | ⬜ |
 | 7 | LLM triage | Local-LLM agent, 3GPP notes KB, schema-validated output, faithfulness eval | ⬜ |
@@ -87,13 +88,24 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 - ✅ 3b.9 Fuzzers `fuzz_http2`, `fuzz_sbi`, `fuzz_sbi_flow` (whole pipeline): 0 crashes; 118 tests on all presets; clang-tidy clean
 - ✅ 3b.10 Bench ≈ 203k SBI / 371k N4 / 489k N2 msgs/s; faster SUPI hasher (pre-keyed EVP_MAC) (`docs/results/probe-phase3b.md`)
 - ✅ 3b.11 ADR-0007; smoke checks 10 (SBI decode, privacy, N2↔SBI linking) and 11 (Kafka offsets, metrics)
-- ⬜ 3b.12 **You:** `docker compose down`, rebuild probe, `up -d`, smoke 10/10, PR, CI green, merge, tag `phase-3b`
+- ✅ 3b.12 Smoke 10/10 on the laptop (real Kafka broker: 1,087 events delivered, 0 dropped); PR #5 merged; tagged `phase-3b`
 
-## Phase 4 — Attacks + dataset (next)
+## Phase 4a — Attacks I: injector, N4 + SBI, labels
 
-- ⬜ 4.1 Attack injector with a hard target allowlist (172.22.0.0/24), dry-run mode, and a run manifest
-- ⬜ 4.2 N2 attacks: registration storm, rogue gNB (NG Setup with forged identity), UE context release abuse
-- ⬜ 4.3 N4 attacks: spoofed session deletion / modification (unknown SEID), PFCP association hijack attempt
-- ⬜ 4.4 SBI attacks: rogue NF registration at the NRF, unauthorised NF discovery, UDM data harvesting
-- ⬜ 4.5 Benign traffic generator: UE churn, PDU sessions, idle periods
-- ⬜ 4.6 Labelled runs → Parquet dataset with a dataset card
+- ✅ 4a.1 `attacks/` package (`prahari-attack`): list/describe/run, `--dry-run`, `--max-seconds`, manifests even on failure
+- ✅ 4a.2 Guard: every socket checked against the constant 172.22.0.0/24 (targets and spoofed sources), narrowing only, `PRAHARI_LAB=1` interlock
+- ✅ 4a.3 PFCP encoder (association, establishment, modification, deletion, heartbeats) cross-checked by the C++ probe; raw-socket spoofing with correct IP/UDP checksums
+- ✅ 4a.4 h2c client on `h2` (flow control, unvalidated mode for fuzzing), bound to the attacker address
+- ✅ 4a.5 N4-01..04 and SBI-01..04, each fired at real Open5GS v2.7.7 NFs; results incl. reproduced CVE-2026-106807 (`docs/results/attacks-phase4a.md`)
+- ✅ 4a.6 Labeller (`prahari_analytics.labels`): attacker address + reserved PFCP sequence markers within run windows; overlap-safe; validated output
+- ✅ 4a.7 Probe: capture drop counters (`/metrics`, `--stats`), 32 MiB capture buffer; `size_bytes` widened for large SBI bodies
+- ✅ 4a.8 Attacker container (172.22.0.40, profile `attack`, NET_RAW only, not on `obs`); `scripts/attack-check.sh`; CI job `attacks`; ADR-0008
+- ⬜ 4a.9 **You:** rebuild probe, `attack-check.sh` 6/6, PR, CI green, merge, tag `phase-4a`
+
+## Phase 4b — Attacks II: N2 + dataset (next)
+
+- ⬜ 4b.1 N2-02 rogue gNB and N2-01 registration storm (UERANSIM-based rogue gNB at the attacker address)
+- ⬜ 4b.2 N2-03 forged UE context release and N2-04 malformed NGAP (pycrate NGAP over SCTP with PPID 60)
+- ⬜ 4b.3 Benign generator: UE churn, PDU session setup/teardown, idle periods, NF restarts
+- ⬜ 4b.4 Campaign runner: benign + attack schedules, recorded as manifests
+- ⬜ 4b.5 Labelled runs → Parquet dataset + dataset card (sizes, class balance, limits)

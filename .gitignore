@@ -20,6 +20,7 @@ __pycache__/
 data/raw/
 data/datasets/
 testbed/events/
+testbed/runs/
 
 # Secrets
 .env

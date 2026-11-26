@@ -126,7 +126,7 @@ class SignallingEvent(_Strict):
     direction: Direction = "unknown"
     src: Endpoint
     dst: Endpoint
-    size_bytes: Annotated[int, Field(ge=0, le=65535)]
+    size_bytes: Annotated[int, Field(ge=0, le=4_294_967_295)]  # SBI bodies can exceed 64 KiB
     decode_status: DecodeStatus
     ue: UeContext | None = None
     sequence: Annotated[int, Field(ge=0, le=16_777_215)] | None = None

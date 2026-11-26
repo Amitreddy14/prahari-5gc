@@ -38,7 +38,7 @@ downstream can affect the core. A probe crash loses visibility, never service.
 | Capture | tcpdump/libpcap on the `core` bridge | Copy N2/N4/SBI packets without touching the NFs | 1–2 |
 | `probe/` | C++20, CMake, libpcap, nghttp2 (HPACK), librdkafka, GoogleTest, libFuzzer | Decode, correlate, pseudonymise, emit events | 0, 2, 3 |
 | `schemas/` | JSON Schema 2020-12 | The event contract between C++ and Python | 0 |
-| `attacks/` | Python (scapy, pycrate, httpx[h2]) | 12 attack scenarios + benign traffic profile, all labelled | 4 |
+| `attacks/` | Python: hand-built PFCP over UDP/raw sockets, `h2` for SBI (pycrate NGAP in 4b) | 12 attack scenarios + benign traffic profile; run manifests label every event (ADR-0008) | 4 |
 | `analytics/` | Python 3.11+, pydantic v2, scikit-learn, PyTorch | Dataset builder, detectors, streaming scorer, evaluation | 0, 4–6 |
 | `triage/` | Python, Ollama (local LLM) | Turn an alert + evidence into a structured incident summary | 7 |
 | `console/` | FastAPI + React/Vite (TypeScript) | Live alert timeline, drill-down, triage view | 8 |
@@ -142,7 +142,7 @@ prahari-5gc/
 │   └── tests/
 ├── schemas/                  event contract + examples
 ├── testbed/                  (Phase 1) compose, Open5GS/UERANSIM configs, provisioning
-├── attacks/                  (Phase 4) injector + benign generator
+├── attacks/                  (Phase 4) injector: guard (allowlist), PFCP, h2c, scenarios, CLI
 ├── triage/                   (Phase 7) LLM triage agent
 ├── console/                  (Phase 8) FastAPI + React
 ├── deploy/                   (Phase 1+) Prometheus, Grafana, release compose
@@ -173,7 +173,7 @@ prahari-5gc/
 | gNB | 172.22.0.20 | NGAP client, GTP-U |
 | UE simulator (UERANSIM) | 172.22.0.21 | UEs ×N, `uesimtunN` interfaces |
 | Provisioning (one-shot) | 172.22.0.31 | — |
-| Attack injector | 172.22.0.40 | — |
+| Attack injector (profile `attack`) | 172.22.0.40 | core network only; NET_RAW for spoofed PFCP; never on `obs` |
 | Capture sidecar | host netns | tcpdump on bridge `prahari-core` |
 | Probe | host netns | captures on `prahari-core`; Kafka client to 172.23.0.10; `/metrics` on 9464 |
 | Kafka (KRaft, single node) | 172.23.0.10 | 9092 (internal only); topic `prahari.events.v1`, 3 partitions |

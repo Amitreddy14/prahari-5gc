@@ -6,9 +6,9 @@ core's control plane (NGAP, NAS-5GS, PFCP, HTTP/2 SBI), and an analytics layer
 that detects attacks, measures its own robustness, and explains each alert in
 terms of the 3GPP procedure being abused.
 
-> Status: **Phase 3b (probe complete: N2, N4 and SBI decoded, one pseudonym per UE across
-> all three, events on Kafka, Prometheus metrics)**. See [`task.md`](task.md) for the roadmap and
-> [`docs/results/`](docs/results) for measured results per phase.
+> Status: **Phase 4a (attack injector: 8 N4/SBI attacks fired at real Open5GS NFs, exact
+> ground-truth labels)**. The probe (N2, N4, SBI, Kafka, metrics) is complete. See
+> [`task.md`](task.md) for the roadmap and [`docs/results/`](docs/results) for measured results.
 > Results tables will appear here only when a committed script produces them.
 
 ```mermaid
@@ -38,7 +38,8 @@ with the NRF. Prahari watches those interfaces and catches it. Full reasoning in
 | [`schemas/`](schemas) | Event contract v1 (JSON Schema) + examples |
 | [`docs/adr/`](docs/adr) | Architecture decision records |
 | [`testbed/`](testbed) | Open5GS v2.7.7 + UERANSIM v3.2.8 in Compose, capture sidecar, smoke test |
-| `attacks/`, `triage/`, `console/` | Arrive in Phases 4, 7, 8 |
+| [`attacks/`](attacks) | Attack injector (`prahari-attack`): allowlisted to the testbed, run manifests for labels |
+| `triage/`, `console/` | Arrive in Phases 7, 8 |
 
 ## Quick start
 
@@ -79,6 +80,8 @@ Requirements: Docker Desktop (WSL2 backend) and VS Code with the Dev Containers 
 | UEs traceable across N2, N4 and SBI by one pseudonym | 10 / 10 |
 | Probe throughput, one 2.1 GHz core, JSON included | ~489k N2, ~371k N4, ~203k SBI msgs/s |
 | Fuzzing (8 targets, ~80M inputs) | 0 crashes |
+| N4/SBI attacks against real Open5GS v2.7.7 | 7 of 8 effective; UPF crash reproduced (CVE-2026-106807) |
+| Spoofed attack messages attributed exactly by the labeller | 102,302 / 102,302 |
 | Testbed footprint at 100 UEs | ~425 MB RAM |
 
 ## Engineering standards

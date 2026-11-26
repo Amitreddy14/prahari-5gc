@@ -23,9 +23,16 @@ namespace prahari {
 
 struct KafkaStats;
 
+struct CaptureCounters {
+    std::uint64_t received{};
+    std::uint64_t dropped_kernel{};
+    std::uint64_t dropped_interface{};
+};
+
 [[nodiscard]] std::string render_metrics(const Stats& s, const pfcp::SessionTable& sessions,
                                          const ngap::UeTable& ues, std::size_t sbi_flows,
-                                         const KafkaStats* kafka);
+                                         const KafkaStats* kafka,
+                                         const CaptureCounters* capture = nullptr);
 
 class MetricsServer {
 public:

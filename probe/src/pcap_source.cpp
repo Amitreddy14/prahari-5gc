@@ -11,6 +11,9 @@ namespace {
 
 constexpr int kSnapLen = 65535;
 constexpr int kReadTimeoutMs = 200;
+// Kernel ring buffer for live capture. libpcap's default (2 MiB) leaves little room for
+// a burst while the probe is busy; 32 MiB holds ~200k small signalling packets.
+constexpr int kBufferBytes = 32 * 1024 * 1024;
 constexpr std::uint64_t kNsPerSec = 1'000'000'000ULL;
 constexpr std::uint64_t kNsPerUs = 1'000ULL;
 
@@ -32,8 +35,8 @@ std::string apply_filter(pcap* handle, const std::string& bpf) {
 
 }  // namespace
 
-PcapSource::PcapSource(pcap* handle, bool nanosecond)
-    : handle_(handle), nanosecond_(nanosecond), raw_link_(pcap_datalink(handle)) {
+PcapSource::PcapSource(pcap* handle, bool nanosecond, bool live)
+    : handle_(handle), nanosecond_(nanosecond), live_(live), raw_link_(pcap_datalink(handle)) {
     switch (raw_link_) {
         case DLT_EN10MB:
             link_ = net::LinkType::kEthernet;
@@ -68,7 +71,7 @@ PcapSource::Opened PcapSource::open_file(const std::string& path, const std::str
     if (h == nullptr) {
         return {nullptr, std::string{"cannot open '"} + path + "': " + err.data()};
     }
-    std::unique_ptr<PcapSource> src{new PcapSource(h, true)};
+    std::unique_ptr<PcapSource> src{new PcapSource(h, true, false)};
     if (auto e = apply_filter(h, bpf); !e.empty()) {
         return {nullptr, e};
     }
@@ -86,17 +89,34 @@ PcapSource::Opened PcapSource::open_live(const std::string& iface, const std::st
     (void)pcap_set_promisc(h, 1);
     (void)pcap_set_timeout(h, kReadTimeoutMs);
     (void)pcap_set_immediate_mode(h, 1);
+    (void)pcap_set_buffer_size(h, kBufferBytes);
     const bool nano = pcap_set_tstamp_precision(h, PCAP_TSTAMP_PRECISION_NANO) == 0;
     if (const int rc = pcap_activate(h); rc < 0) {
         const std::string msg = std::string{"cannot activate '"} + iface + "': " + pcap_geterr(h);
         pcap_close(h);
         return {nullptr, msg};
     }
-    guard.reset(new PcapSource(h, nano));
+    guard.reset(new PcapSource(h, nano, true));
     if (auto e = apply_filter(h, bpf); !e.empty()) {
         return {nullptr, e};
     }
     return {std::move(guard), {}};
+}
+
+PcapSource::CaptureStats PcapSource::capture_stats() const {
+    CaptureStats c;
+    if (!live_) {
+        return c;
+    }
+    pcap_stat st{};
+    if (pcap_stats(handle_, &st) != 0) {
+        return c;
+    }
+    c.available = true;
+    c.received = st.ps_recv;
+    c.dropped_kernel = st.ps_drop;
+    c.dropped_interface = st.ps_ifdrop;
+    return c;
 }
 
 PcapSource::Next PcapSource::next(Frame& out) {
