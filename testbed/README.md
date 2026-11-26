@@ -65,15 +65,26 @@ docker compose down && docker compose up -d
 ```
 
 **Attacks (Phase 4).** The injector runs in its own container at 172.22.0.40, only when
-asked for (`--profile attack`), and refuses any address outside 172.22.0.0/24. After the
-smoke test, `bash scripts/attack-check.sh` runs the non-destructive scenarios and checks
-that the probe captured them and the labeller attributed every one. Manifests and
-labelled events land in `runs/` (git-ignored). See `attacks/README.md`.
+asked for (`--profile attack`), and refuses any address outside 172.22.0.0/24. It covers
+N4, SBI and N2 (NGAP over SCTP). After the smoke test, `bash scripts/attack-check.sh` runs
+the non-destructive scenarios (including N2-02 rogue gNB, a small N2-01 storm, and N2-04
+fuzz) and checks that the probe captured them and the labeller attributed every one.
+Manifests and labelled events land in `runs/` (git-ignored). See `attacks/README.md`.
 
 ```bash
 docker compose --profile attack up -d --build attacker
 docker compose exec attacker prahari-attack list
 bash scripts/attack-check.sh
+```
+
+**Dataset (Phase 4b).** `bash scripts/dataset-run.sh [campaigns/quick.json]` runs a
+benign + attack campaign (`prahari-campaign`), labels the capture, and writes
+`runs/<name>/dataset.parquet` plus `dataset-card.md`. Use `campaigns/dataset.json` for the
+full set. The campaign runner drives benign UE churn through `nr-cli` while firing attacks
+on a timeline, so attacks are captured inside realistic traffic.
+
+```bash
+bash scripts/dataset-run.sh campaigns/dataset.json
 ```
 
 Useful commands:

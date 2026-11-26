@@ -36,6 +36,10 @@ def test_run_id_fits_the_schema(tmp_path: Path) -> None:
 
 def test_all_scenarios_are_registered_with_valid_ids() -> None:
     assert sorted(SCENARIOS) == [
+        "N2-01",
+        "N2-02",
+        "N2-03",
+        "N2-04",
         "N4-01",
         "N4-02",
         "N4-03",
@@ -47,7 +51,7 @@ def test_all_scenarios_are_registered_with_valid_ids() -> None:
     ]
     for aid, cls in SCENARIOS.items():
         assert cls.attack_id == aid
-        assert cls.interface in ("N4", "SBI")
+        assert cls.interface in ("N2", "N4", "SBI")
         for target in cls.targets(cls.defaults()):
             assert target.startswith("172.22.0.")
 

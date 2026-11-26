@@ -38,8 +38,9 @@ downstream can affect the core. A probe crash loses visibility, never service.
 | Capture | tcpdump/libpcap on the `core` bridge | Copy N2/N4/SBI packets without touching the NFs | 1–2 |
 | `probe/` | C++20, CMake, libpcap, nghttp2 (HPACK), librdkafka, GoogleTest, libFuzzer | Decode, correlate, pseudonymise, emit events | 0, 2, 3 |
 | `schemas/` | JSON Schema 2020-12 | The event contract between C++ and Python | 0 |
-| `attacks/` | Python: hand-built PFCP over UDP/raw sockets, `h2` for SBI (pycrate NGAP in 4b) | 12 attack scenarios + benign traffic profile; run manifests label every event (ADR-0008) | 4 |
-| `analytics/` | Python 3.11+, pydantic v2, scikit-learn, PyTorch | Dataset builder, detectors, streaming scorer, evaluation | 0, 4–6 |
+| `attacks/` | Python: hand-built PFCP over UDP/raw sockets, `h2` for SBI, pycrate NGAP/NAS over SCTP for N2 | 12 attack scenarios (N4/SBI/N2); run manifests label every event (ADR-0008, ADR-0009) | 4 |
+| `campaign/` | Python, `docker compose exec` orchestration | Benign UE churn + a timed attack schedule into one capture (`prahari-campaign`) | 4b |
+| `analytics/` | Python 3.11+, pydantic v2, pyarrow, scikit-learn, PyTorch | Labeller, Parquet dataset builder + card, detectors, evaluation | 0, 4–6 |
 | `triage/` | Python, Ollama (local LLM) | Turn an alert + evidence into a structured incident summary | 7 |
 | `console/` | FastAPI + React/Vite (TypeScript) | Live alert timeline, drill-down, triage view | 8 |
 | `deploy/` | Compose, Prometheus, Grafana | Run everything with one command; ops dashboards | 1, 8, 9 |
@@ -138,11 +139,12 @@ prahari-5gc/
 │   ├── tests/                GoogleTest unit tests
 │   └── fuzz/                 libFuzzer targets + seed corpora
 ├── analytics/                Python package prahari_analytics
-│   ├── src/prahari_analytics/
+│   ├── src/prahari_analytics/ events, labeller, dataset build (prahari-dataset)
 │   └── tests/
 ├── schemas/                  event contract + examples
-├── testbed/                  (Phase 1) compose, Open5GS/UERANSIM configs, provisioning
-├── attacks/                  (Phase 4) injector: guard (allowlist), PFCP, h2c, scenarios, CLI
+├── testbed/                  (Phase 1) compose, configs, provisioning, campaigns/, scripts/
+├── attacks/                  (Phase 4) injector: guard (allowlist), PFCP, h2c, ngap/nas, scenarios, CLI
+├── campaign/                 (Phase 4b) benign traffic + campaign runner (prahari-campaign)
 ├── triage/                   (Phase 7) LLM triage agent
 ├── console/                  (Phase 8) FastAPI + React
 ├── deploy/                   (Phase 1+) Prometheus, Grafana, release compose

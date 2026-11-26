@@ -303,7 +303,7 @@ services:
     depends_on: { kafka: { condition: service_healthy } }
 
   probe:
-    image: prahari/probe:0.5.0
+    image: prahari/probe:0.6.0
     pull_policy: build
     build:
       context: ../probe
@@ -341,7 +341,7 @@ services:
   # dropped except NET_RAW (spoofed PFCP needs raw sockets).
   attacker:
     profiles: [attack]
-    image: prahari/attacker:0.1.0
+    image: prahari/attacker:0.2.0
     pull_policy: build
     build:
       context: ..

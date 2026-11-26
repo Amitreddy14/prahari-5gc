@@ -2,6 +2,18 @@
 
 Newest first. Decisions, bugs, surprises and context that the code alone does not show.
 
+## 2026-11-26 — Phase 4b (N2 attacks, benign traffic, labelled dataset)
+
+**Decisions** (ADR-0009)
+- NGAP/NAS built with **pycrate** (not hand-rolled like PFCP): ASN.1 APER is too error-prone to hand-roll with no live AMF in the sandbox. Compatibility proven *without* an AMF: pycrate re-encodes the testbed's own captured UERANSIM↔Open5GS PDUs byte-for-byte, and the C++ probe decodes every generated PDU (new `decode-ngap`/`decode-nas`). pycrate/pycrate_mobile imported lazily; pycrate + pysctp are attacker runtime deps.
+- N2 transport: **pysctp**, one-to-one, PPID 60 (pysctp's `ntohl` + kernel `htonl` cancel, so `ppid=60` puts 60 on the wire). Added to `guard.py` behind the same allowlist, lazy import. **No IP spoofing on N2** — every PDU rides the attacker's own association, forgery is at the NGAP identity layer (fake gNB ID, other UE's AMF-UE-NGAP-ID); labeller attributes N2 by attacker address alone.
+- Scenarios: N2-01 storm (NG Setup then flood Initial UE Messages with rising RAN-UE-NGAP-IDs; `vary_suci` patches the SUCI MSIN via pycrate), N2-02 rogue gNB, N2-03 forged UE release (sweep AMF-UE-NGAP-IDs; destructive → dataset-only), N2-04 malformed fuzz (seeded, reproducible). N2-03 excluded from attack-check; N2-02/N2-01(small)/N2-04 added.
+- Benign + campaign in a new `campaign/` package (`prahari-campaign`): benign UE churn via `nr-cli` (PDU session establish/release, status), fired alongside a timed attack schedule; orchestration injected so it unit-tests without Docker. Dataset build in `analytics` (`prahari-dataset`): labelled JSONL → 40-col typed **Parquet** (pyarrow) + Markdown dataset card. `scripts/dataset-run.sh`; CI asserts non-empty, attack-labelled Parquet.
+- **Sandbox has no SCTP** (`Protocol not supported`), so live N2 outcomes are deferred to the Docker testbed (which already runs gNB↔AMF over SCTP); in-sandbox validation is the encoder proofs + scenario orchestration (fake association) + the dataset pipeline on 687 real fixture events (687×40, 23 attack, 0 schema failures).
+- Versions: probe 0.6.0, attacker image 0.2.0, analytics 0.1.0, attacks 0.2.0. New CI job `campaign`; `probe-contract` now cross-checks NGAP/NAS too.
+
+**Bug**: pycrate SUCI envelope encoder (`FGSID.encode`) is fiddly; the robust path is to patch the MSIN on the parsed template via `['5GSID']['5GSID']['Value']['Output'].get_alt().set_val(digits)` and re-encode, not to build the envelope from scratch.
+
 ## 2026-11-26 — Phase 4a (attack injector: N4 + SBI, labelling)
 
 **Decisions** (ADR-0008)

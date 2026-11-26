@@ -47,9 +47,10 @@ else
     echo; echo "Result: ${pass} passed, ${fail} failed"; exit 1
 fi
 
-# 2. The guard refuses anything outside the testbed, before sending.
+# 2. The guard refuses anything outside the testbed, before sending (N4, SBI and N2).
 if ! atk prahari-attack run SBI-01 --param nrf=8.8.8.8 --dry-run --out /tmp >/dev/null 2>&1 \
-   && ! atk prahari-attack run N4-01 --param smf=192.0.2.7 --dry-run --out /tmp >/dev/null 2>&1; then
+   && ! atk prahari-attack run N4-01 --param smf=192.0.2.7 --dry-run --out /tmp >/dev/null 2>&1 \
+   && ! atk prahari-attack run N2-02 --param amf=192.0.2.5 --dry-run --out /tmp >/dev/null 2>&1; then
     ok "guard refuses targets and spoofed sources outside 172.22.0.0/24"
 else
     bad "guard" "an out-of-lab address was accepted"
@@ -73,6 +74,12 @@ run SBI-02 heartbeats=1 interval=1 deregister=true
 run SBI-04 count=60 rate=30
 run N4-04 mode=setup repeat=1
 run N4-03 count=100 rate=100 cleanup=true
+# N2 (NGAP/SCTP). Non-destructive only: a rogue gNB setup, a small registration storm
+# (contexts the AMF times out), and a malformed-NGAP fuzz. N2-01/03 at scale and the
+# forged UE-release are dataset runs, not part of this check.
+run N2-02 count=2
+run N2-01 count=30 rate=60 vary_suci=true
+run N2-04 count=120 seed=1337 rate=120
 sleep 6   # late responses + the probe's flush interval
 
 # 4. Label the probe's events with these manifests and check attribution.

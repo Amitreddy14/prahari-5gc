@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prahari-analytics"
-version = "0.0.1"
+version = "0.1.0"
 description = "Detection, evaluation and triage for Prahari-5GC signalling events"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,12 +15,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dataset = ["pyarrow>=16"]  # Parquet dataset build (prahari-dataset)
 dev = [
     "pytest>=8",
     "jsonschema[format]>=4.22",
+    "pyarrow>=16",
     "ruff>=0.6",
     "mypy>=1.10",
 ]
+
+[project.scripts]
+prahari-label = "prahari_analytics.labels:main"
+prahari-dataset = "prahari_analytics.dataset:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/prahari_analytics"]
@@ -47,3 +53,7 @@ strict = true
 packages = ["prahari_analytics"]
 mypy_path = "src"
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["pyarrow.*"]
+ignore_missing_imports = true

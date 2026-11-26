@@ -12,15 +12,21 @@ laptop from sending anything.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import os
 import socket
 import struct
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 TESTBED_NETWORK = ipaddress.IPv4Network("172.22.0.0/24")
 ATTACKER_IP = ipaddress.IPv4Address("172.22.0.40")
+
+# SCTP Payload Protocol Identifier for NGAP (TS 38.412 / IANA). pysctp applies
+# ntohl() and the kernel htonl(), which cancel, so passing 60 puts 60 on the wire.
+PPID_NGAP = 60
 
 
 class TargetNotAllowedError(PermissionError):
@@ -60,6 +66,7 @@ class Guard:
     sent_packets: int = 0
     sent_bytes: int = 0
     _sockets: list[socket.socket] = field(default_factory=list)
+    _sctp: list[SctpAssociation] = field(default_factory=list)
 
     @classmethod
     def for_targets(cls, addrs: Iterable[str]) -> Guard:
@@ -109,6 +116,34 @@ class Guard:
         self.sent_packets += 1
         self.sent_bytes += len(payload)
 
+    # ------------------------------------------------------------------ SCTP (N2)
+    def sctp_connect(
+        self, ip: str, port: int, timeout: float = 5.0, source_ip: str = ""
+    ) -> SctpAssociation:
+        """One-to-one SCTP association to a testbed NF (the AMF), for NGAP.
+
+        pysctp is imported here, not at module load: N4/SBI and the CLI never need
+        it, and only a real N2 run requires the kernel SCTP stack and the library.
+        """
+        self.check(ip)
+        if source_ip:
+            check_ip(source_ip)
+        try:
+            import sctp  # noqa: PLC0415  (lazy: only N2 runs need SCTP)
+        except ImportError as e:  # pragma: no cover - environment-specific
+            raise RuntimeError(
+                "SCTP support needs the pysctp package and libsctp (the attacker "
+                "container has both); install pysctp to run N2 attacks"
+            ) from e
+        sk = sctp.sctpsocket_tcp(socket.AF_INET)
+        if source_ip:
+            sk.bind((source_ip, 0))
+        sk.settimeout(timeout)
+        sk.connect((ip, port))
+        assoc = SctpAssociation(self, sk)
+        self._sctp.append(assoc)
+        return assoc
+
     # ------------------------------------------------------------------ TCP
     def tcp_connect(
         self, ip: str, port: int, timeout: float = 3.0, source_ip: str = ""
@@ -128,9 +163,50 @@ class Guard:
         self.sent_bytes += nbytes
 
     def close(self) -> None:
+        for assoc in self._sctp:
+            assoc.close()
+        self._sctp.clear()
         for s in self._sockets:
             s.close()
         self._sockets.clear()
+
+
+@dataclass
+class SctpAssociation:
+    """A live one-to-one SCTP association, owned by a Guard.
+
+    Thin wrapper over a pysctp socket so NGAP PDUs are sent with PPID 60 and every
+    byte is counted on the owning guard. `sock` is any object exposing the pysctp
+    one-to-one API (sctp_send / sctp_recv / settimeout / close); tests inject a fake.
+    """
+
+    guard: Guard
+    sock: Any
+    peer: tuple[str, int] | None = None
+
+    def send(self, pdu: bytes, ppid: int = PPID_NGAP) -> None:
+        self.sock.sctp_send(pdu, ppid=ppid)
+        self.guard.count_sent(len(pdu))
+
+    def recv(self, timeout: float = 2.0, maxlen: int = 65535) -> bytes | None:
+        """One application message, or None on timeout. SCTP notifications (association
+        and shutdown events) are skipped; a shutdown surfaces as a RuntimeError."""
+        import sctp  # noqa: PLC0415
+
+        self.sock.settimeout(timeout)
+        try:
+            _addr, flags, msg, _notif = self.sock.sctp_recv(maxlen)
+        except (TimeoutError, OSError):
+            return None
+        if flags & sctp.FLAG_NOTIFICATION:
+            return None
+        if not msg:
+            raise RuntimeError("SCTP association shut down by peer")
+        return bytes(msg)
+
+    def close(self) -> None:
+        with contextlib.suppress(OSError):
+            self.sock.close()
 
 
 def _checksum(data: bytes) -> int:

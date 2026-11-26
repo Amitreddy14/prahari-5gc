@@ -11,8 +11,8 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 | 2 | Probe I: capture + PFCP | libpcap live/offline, Ethernet/SLL/IPv4/IPv6/UDP/SCTP, full PFCP IE walk, JSONL output, real-capture tests vs tshark, throughput benchmark | ✅ PR #3 merged, tagged `phase-2` |
 | 3a | Probe II: NGAP + NAS | NGAP APER + key IEs, NAS-5GS with per-UE NEA0 tracking, SUPI HMAC in C++, UE table, N2 fixture, fuzzers | ✅ PR #4 merged, tagged `phase-3a` |
 | 3b | Probe III: SBI, Kafka, metrics | TCP reassembly, HTTP/2 + HPACK, 3GPP operation names, one UE pseudonym across N2/N4/SBI, Kafka producer + broker, Prometheus metrics | ✅ PR #5 merged, tagged `phase-3b` |
-| 4a | Attacks I: injector, N4 + SBI, labels | Allowlisted injector, 8 N4/SBI scenarios validated on real Open5GS, run manifests, exact labeller, attacker container | 🔄 (awaiting your run + merge) |
-| 4b | Attacks II: N2 + dataset | Rogue gNB, registration storm, forged release, malformed NGAP; benign generator; labelled runs → Parquet + dataset card | ⬜ |
+| 4a | Attacks I: injector, N4 + SBI, labels | Allowlisted injector, 8 N4/SBI scenarios validated on real Open5GS, run manifests, exact labeller, attacker container | ✅ |
+| 4b | Attacks II: N2 + dataset | Rogue gNB, registration storm, forged release, malformed NGAP; benign generator; campaign runner; labelled runs → Parquet + dataset card | 🔄 (awaiting your run + merge) |
 | 5 | Detection | Rules, Isolation Forest, sequence model; streaming scorer; evaluation harness and results table | ⬜ |
 | 6 | Adversarial robustness | Adaptive evasion attacks, measured degradation, hardening, paper-ready results | ⬜ |
 | 7 | LLM triage | Local-LLM agent, 3GPP notes KB, schema-validated output, faithfulness eval | ⬜ |
@@ -100,12 +100,14 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 - ✅ 4a.6 Labeller (`prahari_analytics.labels`): attacker address + reserved PFCP sequence markers within run windows; overlap-safe; validated output
 - ✅ 4a.7 Probe: capture drop counters (`/metrics`, `--stats`), 32 MiB capture buffer; `size_bytes` widened for large SBI bodies
 - ✅ 4a.8 Attacker container (172.22.0.40, profile `attack`, NET_RAW only, not on `obs`); `scripts/attack-check.sh`; CI job `attacks`; ADR-0008
-- ⬜ 4a.9 **You:** rebuild probe, `attack-check.sh` 6/6, PR, CI green, merge, tag `phase-4a`
+- ✅ 4a.9 Rebuilt probe, `attack-check.sh` 5/5, PR #6, CI green, merged, tagged `phase-4a`
 
-## Phase 4b — Attacks II: N2 + dataset (next)
+## Phase 4b — Attacks II: N2 + dataset
 
-- ⬜ 4b.1 N2-02 rogue gNB and N2-01 registration storm (UERANSIM-based rogue gNB at the attacker address)
-- ⬜ 4b.2 N2-03 forged UE context release and N2-04 malformed NGAP (pycrate NGAP over SCTP with PPID 60)
-- ⬜ 4b.3 Benign generator: UE churn, PDU session setup/teardown, idle periods, NF restarts
-- ⬜ 4b.4 Campaign runner: benign + attack schedules, recorded as manifests
-- ⬜ 4b.5 Labelled runs → Parquet dataset + dataset card (sizes, class balance, limits)
+- ✅ 4b.1 N2-01 registration storm and N2-02 rogue gNB (NGAP from the attacker's own SCTP association, identity forged at the NGAP layer, not the IP)
+- ✅ 4b.2 N2-03 forged UE context release and N2-04 malformed NGAP fuzz; NGAP/NAS via pycrate over SCTP (PPID 60), wire-compatibility proven by byte-identical round-trip of the real testbed capture + probe `decode-ngap`/`decode-nas` cross-check
+- ✅ 4b.3 Benign generator (`prahari_campaign.benign`): UE churn via `nr-cli` (PDU session establish/release, status polls)
+- ✅ 4b.4 Campaign runner (`prahari-campaign`): benign traffic + a timed attack schedule, one `campaign.json` tying the run manifests together
+- ✅ 4b.5 Dataset build (`prahari-dataset`): labelled events → typed Parquet (40 columns) + Markdown dataset card; `scripts/dataset-run.sh`; CI asserts a non-empty, attack-labelled Parquet
+- ✅ 4b.6 ADR-0009; `docs/results/attacks-phase4b.md`; threat-model N2 note; probe 0.6.0, attacker 0.2.0, analytics 0.1.0, attacks 0.2.0
+- ⬜ 4b.7 **You:** copy `ci.yml`/`Makefile`, rebuild probe (0.6.0), `smoke.sh` 10/10, `attack-check.sh` (now +N2), `dataset-run.sh`, PR, CI green, merge, tag `phase-4b`

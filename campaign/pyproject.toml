@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "prahari-campaign"
+version = "0.1.0"
+description = "Benign traffic + attack campaign runner for the Prahari-5GC testbed"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Amit Reddy" }]
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["pyyaml>=6"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "types-pyyaml",
+]
+
+[project.scripts]
+prahari-campaign = "prahari_campaign.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/prahari_campaign"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "S", "SIM", "RUF", "PL", "PT"]
+ignore = ["PLR2004", "PLR0913"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["prahari_campaign"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true
