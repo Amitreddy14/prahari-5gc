@@ -1,0 +1,15 @@
+{
+  "name": "prahari-dataset-v1",
+  "tail_seconds": 10,
+  "benign": { "imsi_base": "001010000000001", "ue_count": 10, "rate": 3.0, "seed": 1 },
+  "steps": [
+    { "at": 15,  "id": "SBI-01" },
+    { "at": 30,  "id": "N2-02", "params": { "count": "3" } },
+    { "at": 45,  "id": "N2-01", "params": { "count": "150", "rate": "100" } },
+    { "at": 70,  "id": "N4-03", "params": { "count": "200", "rate": "150" } },
+    { "at": 95,  "id": "SBI-02" },
+    { "at": 110, "id": "N2-04", "params": { "count": "300", "seed": "1337" } },
+    { "at": 135, "id": "N4-01", "params": { "seid_count": "512" } },
+    { "at": 160, "id": "N2-03", "params": { "amf_ue_count": "32" } }
+  ]
+}

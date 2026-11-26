@@ -6,10 +6,11 @@ core's control plane (NGAP, NAS-5GS, PFCP, HTTP/2 SBI), and an analytics layer
 that detects attacks, measures its own robustness, and explains each alert in
 terms of the 3GPP procedure being abused.
 
-> Status: **Phase 4a (attack injector: 8 N4/SBI attacks fired at real Open5GS NFs, exact
-> ground-truth labels)**. The probe (N2, N4, SBI, Kafka, metrics) is complete. See
-> [`task.md`](task.md) for the roadmap and [`docs/results/`](docs/results) for measured results.
-> Results tables will appear here only when a committed script produces them.
+> Status: **Phase 4b (12 attacks across N4, SBI and N2; benign traffic + campaign runner;
+> labelled Parquet dataset)**. The probe (N2, N4, SBI, Kafka, metrics) is complete, and the
+> injector now covers NGAP over SCTP. See [`task.md`](task.md) for the roadmap and
+> [`docs/results/`](docs/results) for measured results. Results tables appear here only
+> when a committed script produces them.
 
 ```mermaid
 flowchart LR
@@ -34,11 +35,12 @@ with the NRF. Prahari watches those interfaces and catches it. Full reasoning in
 | Path | What |
 |---|---|
 | [`probe/`](probe) | C++20 passive probe: bounds-checked decoders, GoogleTest, libFuzzer |
-| [`analytics/`](analytics) | Python: event contract, detectors, evaluation |
+| [`analytics/`](analytics) | Python: event contract, labeller, dataset build (`prahari-dataset`), detectors |
 | [`schemas/`](schemas) | Event contract v1 (JSON Schema) + examples |
 | [`docs/adr/`](docs/adr) | Architecture decision records |
-| [`testbed/`](testbed) | Open5GS v2.7.7 + UERANSIM v3.2.8 in Compose, capture sidecar, smoke test |
-| [`attacks/`](attacks) | Attack injector (`prahari-attack`): allowlisted to the testbed, run manifests for labels |
+| [`testbed/`](testbed) | Open5GS v2.7.7 + UERANSIM v3.2.8 in Compose, capture sidecar, smoke/attack/dataset scripts |
+| [`attacks/`](attacks) | Attack injector (`prahari-attack`): N4/SBI/N2, allowlisted to the testbed, run manifests for labels |
+| [`campaign/`](campaign) | Benign traffic + attack campaign runner (`prahari-campaign`) |
 | `triage/`, `console/` | Arrive in Phases 7, 8 |
 
 ## Quick start
@@ -82,6 +84,8 @@ Requirements: Docker Desktop (WSL2 backend) and VS Code with the Dev Containers 
 | Fuzzing (8 targets, ~80M inputs) | 0 crashes |
 | N4/SBI attacks against real Open5GS v2.7.7 | 7 of 8 effective; UPF crash reproduced (CVE-2026-106807) |
 | Spoofed attack messages attributed exactly by the labeller | 102,302 / 102,302 |
+| N2 (NGAP/NAS) encoders vs real testbed PDUs (pycrate round-trip) | byte-identical; every generated PDU decodes in the C++ probe |
+| Labelled dataset pipeline (events → typed Parquet + card) | 40 columns, schema-validated, class balance in the card |
 | Testbed footprint at 100 UEs | ~425 MB RAM |
 
 ## Engineering standards

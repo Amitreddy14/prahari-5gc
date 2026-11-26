@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from prahari_attacks.scenarios.base import Scenario
+from prahari_attacks.scenarios.n2 import ForgedUeRelease, NgapFuzz, RegistrationStorm, RogueGnb
 from prahari_attacks.scenarios.n4 import (
     EstablishmentFlood,
     RogueAssociation,
@@ -14,6 +15,10 @@ from prahari_attacks.scenarios.sbi import NfDeregistration, NrfRecon, RogueNfReg
 SCENARIOS: dict[str, type[Scenario]] = {
     s.attack_id: s
     for s in (
+        RegistrationStorm,
+        RogueGnb,
+        ForgedUeRelease,
+        NgapFuzz,
         SessionDeletion,
         SessionModificationHijack,
         EstablishmentFlood,

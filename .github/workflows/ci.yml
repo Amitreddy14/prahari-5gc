@@ -86,7 +86,8 @@ jobs:
           echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ninja-build libgtest-dev libpcap-dev libssl-dev libnghttp2-dev librdkafka-dev tshark
+            ninja-build libgtest-dev libpcap-dev libssl-dev libnghttp2-dev librdkafka-dev \
+            libsctp-dev tshark
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -108,14 +109,16 @@ jobs:
         env:
           PRAHARI_PROBE_BIN: ${{ github.workspace }}/probe/build/release/prahari-probe
         run: pip install -e ".[dev]" && pytest -rs tests/test_probe_output.py
-      - name: Injector's PFCP messages decode in the C++ probe
+      - name: Injector's PFCP/NGAP/NAS messages decode in the C++ probe
         working-directory: attacks
         env:
           PRAHARI_PROBE_BIN: ${{ github.workspace }}/probe/build/release/prahari-probe
-        run: pip install -e ".[dev]" && pytest -rs tests/test_pfcp.py
+        run: |
+          pip install -e ".[dev]"
+          pytest -rs tests/test_pfcp.py tests/test_ngap.py tests/test_nas.py
 
   attacks:
-    # The injector: lint, strict types, tests (allowlist, PFCP encoder, h2c, CLI).
+    # The injector: lint, strict types, tests (allowlist, PFCP/NGAP/NAS encoders, h2c, CLI).
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -127,7 +130,28 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: attacks/pyproject.toml
+      - name: Install libsctp (pysctp builds its extension against it)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsctp-dev
       - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - run: pytest
+
+  campaign:
+    # The campaign runner: benign traffic generator + attack timeline orchestration.
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: campaign
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: campaign/pyproject.toml
+      - run: pip install -e ".[dev,yaml]"
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy
@@ -194,6 +218,20 @@ jobs:
         run: bash testbed/scripts/smoke.sh
       - name: Attack check (injector + probe + labeller, non-destructive)
         run: bash testbed/scripts/attack-check.sh
+      - name: Dataset build (campaign -> label -> Parquet)
+        working-directory: testbed
+        run: |
+          bash scripts/dataset-run.sh campaigns/quick.json
+          # Assert the Parquet is non-empty and carries attack labels (checked in the
+          # attacker container, which has pyarrow; the host runner does not).
+          docker compose exec -T attacker python - <<'PY'
+          import pyarrow.parquet as pq
+          t = pq.read_table("/runs/quick/dataset.parquet")
+          attack = sum(1 for v in t.column("is_attack").to_pylist() if v)
+          print(f"dataset: {t.num_rows} rows, {attack} attack-labelled")
+          assert t.num_rows > 0, "empty dataset"
+          assert attack > 0, "no attack-labelled events -- labelling or capture broke"
+          PY
       - name: Logs on failure
         if: failure()
         working-directory: testbed

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prahari-attacks"
-version = "0.1.0"
+version = "0.2.0"
 description = "Attack injector for the Prahari-5GC testbed (lab use only: refuses any target outside 172.22.0.0/24)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,8 @@ license = "MIT"
 authors = [{ name = "Amit Reddy" }]
 dependencies = [
     "h2>=4.1,<5",
+    "pycrate>=0.7",   # NGAP (TS 38.413) and NAS 5GS (TS 24.501) encoding, N2 attacks
+    "pysctp>=0.7",    # SCTP transport for NGAP (N2); needs libsctp at runtime
 ]
 
 [project.optional-dependencies]
@@ -41,7 +43,7 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "S", "SIM", "RUF", "PL", "PT"]
 ignore = ["PLR2004", "PLR0913"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S603"]  # asserts; running the dev-built probe binary
+"tests/**" = ["S101", "S603", "S311"]  # asserts; probe binary; seeded RNG in fuzz tests
 
 [tool.mypy]
 python_version = "3.11"
@@ -50,5 +52,5 @@ packages = ["prahari_attacks"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["h2.*", "hpack.*"]
+module = ["h2.*", "hpack.*", "sctp.*", "pycrate_asn1dir.*", "pycrate_mobile.*"]
 ignore_missing_imports = true

@@ -1,8 +1,8 @@
 # Run inside the dev container (VS Code: "Reopen in Container") or any Linux box.
 # Windows without make: the commands under each target work as-is in the container shell.
 .PHONY: help probe probe-asan probe-release tidy fuzz analytics lint check preflight clean \
-	testbed-up testbed-down testbed-smoke testbed-profile testbed-logs \
-	bench crosscheck probe-events attacks
+	testbed-up testbed-down testbed-smoke testbed-profile testbed-logs testbed-dataset \
+	bench crosscheck probe-events attacks attacks-contract campaign
 
 PY ?= python3
 FUZZ_SECONDS ?= 60
@@ -16,10 +16,12 @@ help:
 	@echo "bench          Probe throughput (PFCP + NGAP) on PCAP (default: the N4 fixture)"
 	@echo "crosscheck     Probe vs tshark, field by field, on CROSSCHECK_PCAPS (all fixtures)"
 	@echo "probe-events   Follow live probe events from the running testbed"
-	@echo "analytics      ruff + mypy + pytest for the Python package"
-	@echo "attacks        ruff + mypy + pytest for the attack injector"
+	@echo "analytics      ruff + mypy + pytest for the analytics package"
+	@echo "attacks        ruff + mypy + pytest for the attack injector (N4/SBI/N2)"
+	@echo "campaign       ruff + mypy + pytest for the campaign runner"
 	@echo "lint           shellcheck + clang-format check"
 	@echo "check          Everything CI runs"
+	@echo "testbed-dataset  Run a campaign and build the labelled Parquet dataset"
 	@echo "preflight      Can this Docker host run the 5G testbed?"
 	@echo "testbed-up     Build and start the 5G testbed (needs testbed/.env)"
 	@echo "testbed-smoke  End-to-end checks on the running testbed"
@@ -65,14 +67,22 @@ analytics:
 attacks:
 	cd attacks && ruff check . && ruff format --check . && mypy && pytest
 
+campaign:
+	cd campaign && ruff check . && ruff format --check . && mypy && pytest
+
 analytics-contract: probe-release
 	cd analytics && PRAHARI_PROBE_BIN=../probe/build/release/prahari-probe pytest tests/test_probe_output.py
+
+attacks-contract: probe-release
+	cd attacks && PRAHARI_PROBE_BIN=../probe/build/release/prahari-probe \
+		pytest tests/test_pfcp.py tests/test_ngap.py tests/test_nas.py
 
 lint:
 	shellcheck scripts/*.sh testbed/scripts/*.sh testbed/docker/*.sh
 	find probe -path probe/build -prune -o \( -name '*.cpp' -o -name '*.hpp' \) -print | xargs clang-format --dry-run --Werror
 
-check: lint probe-asan probe-release tidy analytics analytics-contract attacks crosscheck
+check: lint probe-asan probe-release tidy analytics analytics-contract attacks attacks-contract \
+	campaign crosscheck
 
 preflight:
 	bash scripts/check-host.sh
@@ -88,6 +98,10 @@ testbed-up: testbed/.env
 
 testbed-smoke:
 	bash testbed/scripts/smoke.sh
+
+DATASET_SPEC ?= campaigns/quick.json
+testbed-dataset:
+	cd testbed && bash scripts/dataset-run.sh $(DATASET_SPEC)
 
 testbed-profile:
 	bash testbed/scripts/profile.sh

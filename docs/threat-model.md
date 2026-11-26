@@ -59,6 +59,16 @@ Measured, not assumed (details: `docs/results/attacks-phase4a.md`):
   requester type, NFRegister of a rogue NF succeeds and is returned by discovery, and
   deregistering a real NF hides it until its next heartbeat (~8 s).
 
+### N2 injection (Phase 4b)
+
+The N2 attacks (NGAP over SCTP) are built with pycrate and proven wire-compatible with
+this testbed — pycrate re-encodes the testbed's real UERANSIM↔Open5GS PDUs byte-for-byte,
+and the C++ probe decodes every generated PDU (details: `docs/results/attacks-phase4b.md`,
+`docs/adr/0009`). They ride the attacker's own SCTP association, so the forgery is a fake
+gNB ID or another UE's AMF-UE-NGAP-ID, never a spoofed source address. N2 has no transport
+security (no IPsec/NDS) in the testbed, so the expectation is that the AMF accepts a rogue
+gNB and processes a registration storm; the live outcomes are captured on the testbed.
+
 ## 4. Benign traffic profile
 
 To keep false-alarm numbers honest, the benign generator mixes: UE power-on

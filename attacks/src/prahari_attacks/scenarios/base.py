@@ -12,11 +12,14 @@ from prahari_attacks.guard import ATTACKER_IP, Guard
 from prahari_attacks.manifest import Manifest
 
 # Testbed addresses (Architecture.md section 6).
+AMF_IP = "172.22.0.5"
 SMF_IP = "172.22.0.7"
 UPF_IP = "172.22.0.8"
 NRF_IP = "172.22.0.10"
+GNB_IP = "172.22.0.20"
 PFCP_PORT = 8805
 SBI_PORT = 7777
+NGAP_SCTP_PORT = 38412  # N2: NGAP over SCTP (AMF)
 
 
 @dataclass(frozen=True)

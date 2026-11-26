@@ -5,6 +5,7 @@
 //   prahari-probe run   --pcap capture.pcap  [--out events.jsonl]   offline file
 //   prahari-probe bench --pcap capture.pcap  [--repeat 200]         decode throughput
 //   prahari-probe decode-pfcp <hex>                                  one PFCP header
+//   prahari-probe decode-ngap <hex> | decode-nas <hex>               one N2 PDU / NAS msg
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -22,6 +23,8 @@
 
 #include "prahari/kafka_sink.hpp"
 #include "prahari/metrics.hpp"
+#include "prahari/nas.hpp"
+#include "prahari/ngap.hpp"
 #include "prahari/pcap_source.hpp"
 #include "prahari/pfcp.hpp"
 #include "prahari/pipeline.hpp"
@@ -69,6 +72,8 @@ void print_usage(std::ostream& out) {
         << "      --stats          print pipeline statistics as JSON to stderr at exit\n"
         << "  prahari-probe bench --pcap FILE [--repeat N]   decode throughput, no output\n"
         << "  prahari-probe decode-pfcp <hex>                decode one PFCP header\n"
+        << "  prahari-probe decode-ngap <hex>                decode one NGAP PDU\n"
+        << "  prahari-probe decode-nas <hex>                 decode one NAS 5GS message\n"
         << "  prahari-probe --version | --help\n";
 }
 
@@ -470,6 +475,64 @@ int cmd_decode_pfcp(std::string_view hex) {
     return kExitOk;
 }
 
+int cmd_decode_ngap(std::string_view hex) {
+    const auto bytes = parse_hex(hex);
+    if (!bytes) {
+        std::cerr << "error: input is not valid hex\n";
+        return kExitUsage;
+    }
+    const auto result = prahari::ngap::decode(std::span<const std::uint8_t>{*bytes});
+    if (!result) {
+        std::cout << R"({"ok":false,"error":")" << prahari::to_string(result.error()) << "\"}\n";
+        return kExitDataErr;
+    }
+    const auto& m = result.value();
+    std::cout << R"({"ok":true,"protocol":"ngap","pdu_type":")"
+              << prahari::ngap::to_string(m.pdu_type) << R"(","procedure_code":)"
+              << unsigned{m.procedure_code} << R"(,"message":")"
+              << prahari::ngap::message_name(m.procedure_code, m.pdu_type) << '"'
+              << R"(,"ie_count":)" << m.ies.size();
+    if (m.ran_ue_ngap_id) {
+        std::cout << R"(,"ran_ue_ngap_id":)" << *m.ran_ue_ngap_id;
+    }
+    if (m.amf_ue_ngap_id) {
+        std::cout << R"(,"amf_ue_ngap_id":)" << *m.amf_ue_ngap_id;
+    }
+    if (m.global_gnb_id) {
+        std::cout << R"(,"gnb_id":)" << m.global_gnb_id->gnb_id << R"(,"gnb_id_bits":)"
+                  << unsigned{m.global_gnb_id->gnb_id_bits} << R"(,"plmn":")"
+                  << m.global_gnb_id->plmn << '"';
+    }
+    if (m.ran_node_name) {
+        std::cout << R"(,"ran_node_name":")" << *m.ran_node_name << '"';
+    }
+    std::cout << R"(,"nas_pdu_count":)" << m.nas_pdus.size() << R"(,"size_bytes":)" << m.size_bytes
+              << "}\n";
+    return kExitOk;
+}
+
+int cmd_decode_nas(std::string_view hex) {
+    const auto bytes = parse_hex(hex);
+    if (!bytes) {
+        std::cerr << "error: input is not valid hex\n";
+        return kExitUsage;
+    }
+    const auto result = prahari::nas::decode(std::span<const std::uint8_t>{*bytes}, std::nullopt);
+    if (!result) {
+        std::cout << R"({"ok":false,"error":")" << prahari::to_string(result.error()) << "\"}\n";
+        return kExitDataErr;
+    }
+    const auto& info = result.value();
+    std::cout << R"({"ok":true,"protocol":"nas","message_type":)" << unsigned{info.message_type}
+              << R"(,"message":")" << info.message << R"(","is_5gsm":)"
+              << (info.is_5gsm ? "true" : "false");
+    if (info.registration_type) {
+        std::cout << R"(,"registration_type":)" << unsigned{*info.registration_type};
+    }
+    std::cout << R"(,"has_supi":)" << (info.supi ? "true" : "false") << "}\n";
+    return kExitOk;
+}
+
 int run(const std::vector<std::string_view>& args) {
     if (args.empty() || args[0] == "--help" || args[0] == "-h") {
         print_usage(std::cout);
@@ -481,6 +544,12 @@ int run(const std::vector<std::string_view>& args) {
     }
     if (args[0] == "decode-pfcp" && args.size() == 2) {
         return cmd_decode_pfcp(args[1]);
+    }
+    if (args[0] == "decode-ngap" && args.size() == 2) {
+        return cmd_decode_ngap(args[1]);
+    }
+    if (args[0] == "decode-nas" && args.size() == 2) {
+        return cmd_decode_nas(args[1]);
     }
     if (args[0] == "run" || args[0] == "bench") {
         Options o;

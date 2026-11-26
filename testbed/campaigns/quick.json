@@ -1,0 +1,10 @@
+{
+  "name": "quick",
+  "tail_seconds": 6,
+  "benign": { "imsi_base": "001010000000001", "ue_count": 10, "rate": 4.0, "seed": 1 },
+  "steps": [
+    { "at": 5,  "id": "SBI-01" },
+    { "at": 10, "id": "N2-02", "params": { "count": "2" } },
+    { "at": 15, "id": "N4-03", "params": { "count": "80", "rate": "80", "cleanup": "true" } }
+  ]
+}

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(prahari_probe
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "Passive 5G core signalling probe"
     LANGUAGES CXX)
 
