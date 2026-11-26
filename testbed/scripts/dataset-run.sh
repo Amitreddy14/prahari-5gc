@@ -25,8 +25,10 @@ echo "Prahari-5GC dataset run: ${NAME} (spec ${SPEC})"
 dc --profile attack up -d --build attacker >/dev/null 2>&1 || true
 mkdir -p "runs/${NAME}"
 
-# Fresh event log so the dataset holds only this campaign's traffic.
-: > events/events.jsonl
+# Fresh event log so the dataset holds only this campaign's traffic. The probe writes
+# events/events.jsonl as root, so truncate it from inside the probe container (the host
+# user may not own it) rather than redirecting from this shell.
+dc exec -T probe sh -c ': > /events/events.jsonl'
 
 # 1. Run the campaign (benign UE churn + scheduled attacks) from the host. Attack run
 #    manifests go in a manifests/ subdir; campaign.json stays at runs/<name>/ so the
