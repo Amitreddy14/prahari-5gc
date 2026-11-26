@@ -5,6 +5,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "prahari/nas.hpp"
+#include "prahari/ngap.hpp"
 #include "prahari/pfcp.hpp"
 #include "prahari/pfcp_ie.hpp"
 #include <arpa/inet.h>
@@ -40,6 +42,17 @@ std::string_view pfcp_direction(std::uint8_t type) {
 }
 
 constexpr int kMaxFollowOn = 16;
+constexpr std::uint16_t kNgapPort = 38412;
+
+std::string_view registration_type_name(std::uint8_t t) {
+    switch (t) {
+        case 1:  return "initial";
+        case 2:  return "mobility";
+        case 3:  return "periodic";
+        case 4:  return "emergency";
+        default: return "other";
+    }
+}
 
 }  // namespace
 
@@ -158,18 +171,24 @@ void StreamSink::flush() {
 
 // ---------------------------------------------------------------------------- stats
 
-std::string stats_json(const Stats& s, const pfcp::SessionTable& t) {
+std::string stats_json(const Stats& s, const pfcp::SessionTable& t, const ngap::UeTable& u) {
     std::ostringstream o;
     o << "{\"frames\":" << s.frames << ",\"bytes\":" << s.bytes
       << ",\"link_errors\":" << s.link_errors << ",\"not_ip\":" << s.not_ip << ",\"udp\":" << s.udp
       << ",\"tcp\":" << s.tcp << ",\"sctp\":" << s.sctp
       << ",\"sctp_data_chunks\":" << s.sctp_data_chunks << ",\"ngap_chunks\":" << s.ngap_chunks
-      << ",\"pfcp_messages\":" << s.pfcp_messages
+      << ",\"ngap_messages\":" << s.ngap_messages
+      << ",\"ngap_decode_errors\":" << s.ngap_decode_errors
+      << ",\"nas_messages\":" << s.nas_messages << ",\"nas_opaque\":" << s.nas_opaque
+      << ",\"nas_decode_errors\":" << s.nas_decode_errors << ",\"supi_hashed\":" << s.supi_hashed
+      << ",\"supi_not_hashed\":" << s.supi_not_hashed << ",\"pfcp_messages\":" << s.pfcp_messages
       << ",\"pfcp_decode_errors\":" << s.pfcp_decode_errors
       << ",\"pfcp_unknown_session\":" << s.pfcp_unknown_session << ",\"events\":" << s.events
       << ",\"sessions_tracked\":" << t.size() << ",\"sessions_active\":" << t.active()
       << ",\"sessions_expired\":" << t.expired_establishing()
-      << ",\"sessions_dropped_full\":" << t.dropped_table_full() << "}";
+      << ",\"sessions_dropped_full\":" << t.dropped_table_full() << ",\"ue_contexts\":" << u.size()
+      << ",\"ue_contexts_expired\":" << u.expired()
+      << ",\"ue_contexts_dropped_full\":" << u.dropped_full() << "}";
     return o.str();
 }
 
@@ -210,6 +229,7 @@ void Pipeline::on_frame(std::uint64_t ts_ns, net::LinkType link,
             for (const auto& d : p.sctp_data) {
                 if (d.ppid == net::kPpidNgap) {
                     ++stats_.ngap_chunks;
+                    on_ngap(ts_ns, p, d.payload);
                 }
             }
             break;
@@ -289,7 +309,7 @@ void Pipeline::on_pfcp(std::uint64_t ts_ns, const net::Packet& pkt) {
             if (!view.known) {
                 ++stats_.pfcp_unknown_session;
             }
-            ev.ue_seid = view.up_seid ? view.up_seid : view.cp_seid;
+            ev.ue.seid = view.up_seid ? view.up_seid : view.cp_seid;
         }
         ev.pfcp = ctx;
         emit(ev);
@@ -298,6 +318,131 @@ void Pipeline::on_pfcp(std::uint64_t ts_ns, const net::Packet& pkt) {
             break;
         }
         rest = rest.subspan(h.total_length());
+    }
+}
+
+void Pipeline::on_ngap(std::uint64_t ts_ns, const net::Packet& pkt,
+                       std::span<const std::uint8_t> pdu) {
+    ++stats_.ngap_messages;
+    Event ev;
+    ev.event_id = uuids_.next();
+    ev.ts_ns = ts_ns;
+    ev.interface = "N2";
+    ev.protocol = "NGAP";
+    ev.src = Endpoint{pkt.src.to_string(), pkt.src_port, nf_map_.lookup(pkt.src)};
+    ev.dst = Endpoint{pkt.dst.to_string(), pkt.dst_port, nf_map_.lookup(pkt.dst)};
+    ev.size_bytes = pdu.size();
+
+    // The AMF listens on 38412; the other side is the gNB (or something posing as one).
+    const bool uplink = pkt.dst_port == kNgapPort ||
+                        (pkt.src_port != kNgapPort && nf_map_.lookup(pkt.src) == "gNB");
+    const net::IpAddress& gnb = uplink ? pkt.src : pkt.dst;
+
+    const auto decoded = ngap::decode(pdu);
+    if (!decoded) {
+        ++stats_.ngap_decode_errors;
+        ev.message = "Undecodable";
+        ev.message_code = pdu.size() >= 2 ? pdu[1] : 0;
+        ev.decode_status = to_string(decoded.error());
+        emit(ev);
+        return;
+    }
+    const auto& m = decoded.value();
+    const std::string name = ngap::message_name(m.procedure_code, m.pdu_type);
+    ev.message = name;
+    ev.message_code = m.procedure_code;
+    if (m.pdu_type == ngap::PduType::kInitiating) {
+        ev.direction = ngap::is_class2(m.procedure_code) ? "indication" : "request";
+    } else {
+        ev.direction = "response";
+    }
+
+    NgapContext nctx;
+    nctx.pdu_type = ngap::to_string(m.pdu_type);
+    nctx.procedure_code = m.procedure_code;
+    nctx.ie_count = m.ies.size();
+    if (m.global_gnb_id) {
+        nctx.gnb_id = m.global_gnb_id->gnb_id;
+        nctx.gnb_id_bits = m.global_gnb_id->gnb_id_bits;
+        nctx.plmn = m.global_gnb_id->plmn;
+    }
+    nctx.ran_node_name = m.ran_node_name;
+    ev.ngap = nctx;
+
+    ngap::UeContext* ue = nullptr;
+    if (m.ran_ue_ngap_id) {
+        ue = ues_.touch(gnb, *m.ran_ue_ngap_id, ts_ns);
+        ev.ue.ran_ue_ngap_id = m.ran_ue_ngap_id;
+    }
+    if (ue != nullptr && m.amf_ue_ngap_id) {
+        ue->amf_ue_ngap_id = m.amf_ue_ngap_id;
+    }
+    ev.ue.amf_ue_ngap_id = m.amf_ue_ngap_id;
+
+    if (!m.nas_pdus.empty()) {
+        ++stats_.nas_messages;
+        const auto cipher = ue != nullptr ? ue->cipher_alg : std::nullopt;
+        const auto info = nas::decode(m.nas_pdus.front(), cipher);
+        if (!info) {
+            ++stats_.nas_decode_errors;
+            ev.decode_status = to_string(info.error());
+        } else {
+            const auto& n = info.value();
+            NasContext c;
+            c.epd = n.is_5gsm ? "5GSM" : "5GMM";
+            c.security_header = n.security_header;
+            c.integrity_protected = n.integrity_protected;
+            c.ciphered = n.ciphered;
+            c.decoded = n.decoded;
+            c.message_type = n.message_type;
+            c.message = n.message;
+            if (n.registration_type) {
+                c.registration_type = registration_type_name(*n.registration_type);
+            }
+            if (n.identity) {
+                c.identity_type = nas::to_string(*n.identity);
+            }
+            c.suci_null_scheme = n.suci_null_scheme;
+            c.sm_message_type = n.sm_message_type;
+            c.sm_message = n.sm_message;
+            c.selected_ciphering = n.selected_ciphering;
+            c.selected_integrity = n.selected_integrity;
+            c.mm_cause = n.mm_cause;
+            ev.nas = c;
+            if (!n.decoded) {
+                ++stats_.nas_opaque;
+            }
+            ev.ue.pdu_session_id = n.pdu_session_id;
+            if (ue != nullptr && n.selected_ciphering) {
+                ue->cipher_alg = n.selected_ciphering;
+            }
+            if (n.supi) {
+                if (supi_) {
+                    ++stats_.supi_hashed;
+                    const auto h = supi_->hash(*n.supi);
+                    if (ue != nullptr) {
+                        ue->supi_hash = h;
+                    }
+                    ev.ue.supi_hash = h;
+                } else {
+                    ++stats_.supi_not_hashed;
+                }
+            }
+        }
+    }
+    if (ue != nullptr) {
+        if (!ev.ue.amf_ue_ngap_id) {
+            ev.ue.amf_ue_ngap_id = ue->amf_ue_ngap_id;
+        }
+        if (!ev.ue.supi_hash) {
+            ev.ue.supi_hash = ue->supi_hash;
+        }
+    }
+    emit(ev);
+
+    if (m.procedure_code == ngap::proc::kUeContextRelease &&
+        m.pdu_type == ngap::PduType::kSuccessful && m.ran_ue_ngap_id) {
+        ues_.release(gnb, *m.ran_ue_ngap_id);
     }
 }
 

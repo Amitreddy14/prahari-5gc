@@ -5,7 +5,8 @@
 #
 # Checks, in order: every service healthy, subscribers provisioned, gNB connected
 # to the AMF (NG Setup), every UE registered with a PDU session, user-plane ping
-# through the UPF, and the capture sidecar recording N2, N4 and SBI traffic.
+# through the UPF, the capture sidecar recording N2, N4 and SBI traffic, and the
+# probe decoding N4 (session tracking) and N2 (registrations, without leaking IMSIs).
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"   # Git Bash: do not rewrite /paths
 
@@ -135,15 +136,44 @@ all_sessions_seen() { [ "$(probe_sessions)" -ge "${UE_COUNT}" ]; }
 if [ ! -s "${events}" ]; then
     bad "probe events" "no ${events} yet (docker compose logs probe)"
 elif wait_for all_sessions_seen; then
-    total="$(complete_events | wc -l | tr -d ' ')"
-    bad_decodes="$(complete_events | grep -vc '"decode_status":"ok"' || true)"
+    total="$(complete_events | grep -c '"interface":"N4"' || true)"
+    bad_decodes="$(complete_events | grep '"interface":"N4"' | grep -vc '"decode_status":"ok"' || true)"
     if [ "${bad_decodes}" -eq 0 ]; then
         ok "probe: ${total} N4 events, $(probe_sessions) sessions active, 0 decode errors"
     else
-        bad "probe decode" "${bad_decodes} of ${total} events not decoded cleanly"
+        bad "probe decode" "${bad_decodes} of ${total} N4 events not decoded cleanly"
     fi
 else
     bad "probe sessions" "$(probe_sessions)/${UE_COUNT} sessions seen as active in ${events}"
+fi
+
+# 9. Probe: N2 registrations decoded through NAS, and no IMSI in the output.
+# Registrations can repeat after a restart, so "at least UE_COUNT" is the bar.
+SUPI_KEY="$(grep -E '^PRAHARI_SUPI_KEY=' .env 2>/dev/null | cut -d= -f2- || true)"
+IMSI_BASE="$(grep -E '^PRAHARI_IMSI_BASE=' .env 2>/dev/null | cut -d= -f2 || true)"
+IMSI_BASE="${IMSI_BASE:-001010000000001}"
+registrations() { complete_events | grep -c '"message":"RegistrationRequest"' || true; }
+all_registered() { [ "$(registrations)" -ge "${UE_COUNT}" ]; }
+if wait_for all_registered; then
+    n2_bad="$(complete_events | grep '"interface":"N2"' | grep -vc '"decode_status":"ok"' || true)"
+    opaque="$(complete_events | grep '"interface":"N2"' | grep -c '"decoded":false' || true)"
+    leaked=0
+    for i in $(seq 0 $((UE_COUNT - 1))); do
+        imsi="$(printf '%015d' $((10#${IMSI_BASE} + i)))"
+        if complete_events | grep -qF "${imsi}"; then leaked=$((leaked + 1)); fi
+    done
+    hashed="$(complete_events | grep '"message":"RegistrationRequest"' | grep -c '"supi_hash"' || true)"
+    if [ "${n2_bad}" -ne 0 ] || [ "${opaque}" -ne 0 ]; then
+        bad "probe N2 decode" "${n2_bad} N2 decode errors, ${opaque} NAS messages left opaque"
+    elif [ "${leaked}" -ne 0 ]; then
+        bad "probe privacy" "${leaked} raw IMSI(s) found in ${events}"
+    elif [ -n "${SUPI_KEY}" ] && [ "${hashed}" -lt "${UE_COUNT}" ]; then
+        bad "probe SUPI hashing" "only ${hashed} registrations carry supi_hash (key is set)"
+    else
+        ok "probe: $(registrations) N2 registrations decoded, ${hashed} SUPIs pseudonymised, 0 IMSIs leaked"
+    fi
+else
+    bad "probe N2" "$(registrations)/${UE_COUNT} RegistrationRequests seen in ${events}"
 fi
 
 echo

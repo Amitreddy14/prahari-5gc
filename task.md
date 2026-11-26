@@ -7,9 +7,10 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 | Phase | Name | Outcome | Status |
 |---|---|---|---|
 | 0 | Foundation | Docs, ADRs, threat model, probe + analytics skeletons, event contract, CI, dev container, preflight | ✅ tagged `phase-0` |
-| 1 | Testbed | Open5GS + UERANSIM from pinned source in Compose; N UEs register, open PDU sessions, ping through UPF; captures on N2/N4/SBI | ✅ PR #2, CI green |
-| 2 | Probe I: capture + PFCP | libpcap live/offline, Ethernet/SLL/IPv4/IPv6/UDP/SCTP, full PFCP IE walk, JSONL output, real-capture tests vs tshark, throughput benchmark | 🔄 (awaiting your run + merge) |
-| 3 | Probe II: NGAP, NAS, SBI, Kafka | NGAP APER top-level + key IEs, plain NAS-5GS, HTTP/2 + HPACK, correlation tables, SUPI HMAC, Kafka producer, Prometheus metrics | ⬜ |
+| 1 | Testbed | Open5GS + UERANSIM from pinned source in Compose; N UEs register, open PDU sessions, ping through UPF; captures on N2/N4/SBI | ✅ PR #2 merged, tagged `phase-1` |
+| 2 | Probe I: capture + PFCP | libpcap live/offline, Ethernet/SLL/IPv4/IPv6/UDP/SCTP, full PFCP IE walk, JSONL output, real-capture tests vs tshark, throughput benchmark | ✅ PR #3 merged, tagged `phase-2` |
+| 3a | Probe II: NGAP + NAS | NGAP APER + key IEs, NAS-5GS with per-UE NEA0 tracking, SUPI HMAC in C++, UE table, N2 fixture, fuzzers | 🔄 (awaiting your run + merge) |
+| 3b | Probe III: SBI, Kafka, metrics | HTTP/2 + HPACK, NF-service mapping, N2↔N4 correlation, Kafka producer, Prometheus metrics | ⬜ |
 | 4 | Attacks + dataset | 12-scenario injector with target allowlist, benign generator, labelled runs, Parquet dataset, dataset card | ⬜ |
 | 5 | Detection | Rules, Isolation Forest, sequence model; streaming scorer; evaluation harness and results table | ⬜ |
 | 6 | Adversarial robustness | Adaptive evasion attacks, measured degradation, hardening, paper-ready results | ⬜ |
@@ -56,15 +57,27 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 - ✅ 2.6 Real-capture verification: 1,342 PFCP messages vs tshark, 0 mismatches; 24-packet fixture committed; contract test validates real probe output in Python
 - ✅ 2.7 Bench ≈ 650k PFCP msgs/s on one 2.3 GHz core; 3 fuzzers, ~17M execs, 0 crashes (`docs/results/probe-phase2.md`)
 - ✅ 2.8 Probe container (non-root caps: NET_RAW + NET_ADMIN only) runs live on `prahari-core`; smoke test check 7 verifies its events
-- ⬜ 2.9 **You:** rebuild, smoke 7/7, PR, CI green (incl. `probe-contract`), merge, tag `phase-2`
+- ✅ 2.9 Smoke 7/7 on the laptop; PR #3 merged with CI green (incl. `probe-contract`); tagged `phase-2`
 
-## Phase 3 — Probe II: NGAP, NAS, SBI, Kafka (next)
+## Phase 3a — Probe II: NGAP + NAS-5GS
 
-- ⬜ 3.1 NGAP APER: NGAP-PDU choice, procedure code, criticality, ProtocolIE container; key IEs (RAN/AMF UE NGAP IDs, NAS-PDU, Global RAN Node ID, Cause)
-- ⬜ 3.2 NAS-5GS: security header handling; plain messages (Registration Request/Accept, Deregistration, PDU Session Establishment); SUCI/5G-GUTI handling
-- ⬜ 3.3 SUPI/SUCI pseudonymisation in C++ (HMAC-SHA256, key from env), byte-identical to `supi_hash` in Python
-- ⬜ 3.4 SBI: TCP stream reassembly (per flow, bounded), HTTP/2 frames, HPACK via nghttp2, method/path/status, NF-service mapping
-- ⬜ 3.5 UE correlation across N2 (NGAP IDs) and N4 (SEIDs) where the data allows
-- ⬜ 3.6 Kafka producer (librdkafka, `prahari.events.v1`), backpressure and drop counters; Kafka (KRaft) in compose
-- ⬜ 3.7 Prometheus metrics endpoint for the probe
-- ⬜ 3.8 Real-capture tests vs tshark for NGAP/NAS/SBI; fuzz targets for each decoder; benchmark
+- ✅ 3a.1 NGAP APER: PDU choice, procedure code + names (0–54), criticality, ProtocolIE container (≤ 256 IEs), class-2 direction
+- ✅ 3a.2 NGAP IEs: RAN/AMF UE NGAP IDs (incl. 40-bit AMF ID), NAS-PDU, GlobalRANNodeID (gNB ID + bits + PLMN), RANNodeName (sanitised), UE-NGAP-IDs (114)
+- ✅ 3a.3 NAS-5GS: security headers, 5GMM/5GSM names, Registration/Deregistration/Identity Response, SUCI, Security Mode Command algorithms, causes, UL/DL NAS Transport → inner 5GSM
+- ✅ 3a.4 Per-UE NAS cipher tracking: NEA0 decoded, other ciphers reported as protected
+- ✅ 3a.5 SUPI pseudonyms in C++ (OpenSSL HMAC-SHA256), identical to Python `supi_hash`; key from `PRAHARI_SUPI_KEY`, identities dropped without it
+- ✅ 3a.6 UE table keyed (gNB IP, RAN-UE-NGAP-ID): AMF ID, pseudonym back-fill, release on UEContextReleaseComplete, bounded with idle expiry
+- ✅ 3a.7 Schema v1 + additive `ngap` / `nas` objects; pydantic models; `ue.*` replaces `ue_seid`
+- ✅ 3a.8 Real-capture verification: 2,682 NGAP + 1,342 PFCP messages vs tshark, 0 mismatches, 110 MSINs, 0 leaked; 16-frame N2 fixture committed
+- ✅ 3a.9 Fuzzers `fuzz_ngap` + `fuzz_nas` seeded from real PDUs: 52.6M execs, 0 crashes; 75 tests on all presets; clang-tidy clean
+- ✅ 3a.10 Bench ≈ 450–520k msgs/s on N2 and N4 (`docs/results/probe-phase3a.md`)
+- ✅ 3a.11 Wiring: OpenSSL in CI + probe image, `PRAHARI_SUPI_KEY` via `.env`, smoke check 8 (N2 decode + no IMSI leak), Python contract test on the N2 fixture
+- ⬜ 3a.12 **You:** set `PRAHARI_SUPI_KEY`, rebuild probe, smoke 8/8, PR, CI green, merge, tag `phase-3a`
+
+## Phase 3b — Probe III: SBI, Kafka, metrics (next)
+
+- ⬜ 3b.1 SBI: TCP stream reassembly (per flow, bounded), HTTP/2 frames, HPACK via nghttp2, method/path/status, NF-service mapping
+- ⬜ 3b.2 UE correlation across N2 (NGAP IDs) and N4 (SEIDs) using SMF↔AMF SBI calls
+- ⬜ 3b.3 Kafka producer (librdkafka, `prahari.events.v1`), backpressure and drop counters; Kafka (KRaft) in compose
+- ⬜ 3b.4 Prometheus metrics endpoint for the probe
+- ⬜ 3b.5 Real-capture tests vs tshark for SBI; fuzz target; benchmark

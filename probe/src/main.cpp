@@ -22,16 +22,17 @@
 #include "prahari/pcap_source.hpp"
 #include "prahari/pfcp.hpp"
 #include "prahari/pipeline.hpp"
+#include "prahari/supi.hpp"
 #include "prahari/version.hpp"
 
 namespace {
 
 constexpr int kExitOk = 0;
-constexpr int kExitUsage = 64;    // EX_USAGE
-constexpr int kExitDataErr = 65;  // EX_DATAERR
-constexpr int kExitNoInput = 66;  // EX_NOINPUT
-constexpr int kExitIoErr = 74;    // EX_IOERR
-constexpr std::string_view kDefaultFilter = "udp port 8805 or sctp";
+constexpr int kExitUsage = 64;                                        // EX_USAGE
+constexpr int kExitDataErr = 65;                                      // EX_DATAERR
+constexpr int kExitNoInput = 66;                                      // EX_NOINPUT
+constexpr int kExitIoErr = 74;                                        // EX_IOERR
+constexpr std::string_view kDefaultFilter = "udp port 8805 or sctp";  // N4 + N2
 
 // The signal handler needs the active source to break the capture loop; a global
 // atomic pointer is the only async-signal-safe channel for that.
@@ -46,7 +47,7 @@ extern "C" void on_signal(int /*sig*/) {
 
 void print_usage(std::ostream& out) {
     out << "prahari-probe " << prahari::kVersion << "\n"
-        << "Passive 5G core signalling probe (PFCP today; NGAP/NAS/SBI in Phase 3).\n\n"
+        << "Passive 5G core signalling probe: PFCP (N4), NGAP + NAS (N2).\n\n"
         << "Usage:\n"
         << "  prahari-probe run (--iface IF | --pcap FILE) [options]\n"
         << "      --filter BPF     capture filter (default: \"" << kDefaultFilter << "\")\n"
@@ -54,6 +55,8 @@ void print_usage(std::ostream& out) {
         << "      --nf-map FILE    'IP NF' lines mapping addresses to NF names\n"
         << "                       (default: the Prahari testbed addresses)\n"
         << "      --seed N         deterministic event IDs (tests, reproducible datasets)\n"
+        << "      --supi-key-env V environment variable holding the SUPI HMAC key\n"
+        << "                       (default PRAHARI_SUPI_KEY; unset = SUPIs omitted)\n"
         << "      --stats          print pipeline statistics as JSON to stderr at exit\n"
         << "  prahari-probe bench --pcap FILE [--repeat N]   decode throughput, no output\n"
         << "  prahari-probe decode-pfcp <hex>                decode one PFCP header\n"
@@ -66,6 +69,7 @@ struct Options {
     std::string filter{kDefaultFilter};
     std::string out;
     std::string nf_map;
+    std::string supi_key_env{"PRAHARI_SUPI_KEY"};
     std::optional<std::uint64_t> seed;
     bool stats{};
     std::uint64_t repeat{200};
@@ -113,6 +117,8 @@ std::string parse_options(const std::vector<std::string_view>& args, Options& o)
             o.out = *v;
         } else if (a == "--nf-map") {
             o.nf_map = *v;
+        } else if (a == "--supi-key-env") {
+            o.supi_key_env = *v;
         } else if (a == "--seed") {
             o.seed = parse_u64(*v);
             if (!o.seed) {
@@ -174,6 +180,15 @@ int cmd_run(const Options& o) {
         pipeline.emplace(std::move(nf_map), sink);
     }
 
+    {
+        std::string err;
+        auto hasher = prahari::SupiHasher::from_env(o.supi_key_env.c_str(), err);
+        if (!hasher) {
+            std::cerr << "prahari-probe: warning: " << err << "\n";
+        }
+        pipeline->set_supi_hasher(std::move(hasher));
+    }
+
     g_source.store(&src);
     (void)std::signal(SIGINT, on_signal);
     (void)std::signal(SIGTERM, on_signal);
@@ -216,7 +231,8 @@ int cmd_run(const Options& o) {
     g_source.store(nullptr);
     sink.flush();
     if (o.stats) {
-        std::cerr << prahari::stats_json(pipeline->stats(), pipeline->sessions()) << "\n";
+        std::cerr << prahari::stats_json(pipeline->stats(), pipeline->sessions(), pipeline->ues())
+                  << "\n";
     }
     return rc;
 }
@@ -247,6 +263,7 @@ int cmd_bench(const Options& o) {
     }
     prahari::NullSink sink;
     prahari::Pipeline pipeline{prahari::NfMap::testbed_default(), sink, 1};
+    pipeline.set_supi_hasher(prahari::SupiHasher{"bench-key-not-secret-0123456789"});
     const auto start = std::chrono::steady_clock::now();
     for (std::uint64_t r = 0; r < o.repeat; ++r) {
         for (const auto& fr : frames) {
@@ -256,11 +273,15 @@ int cmd_bench(const Options& o) {
     const auto secs =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     const auto& s = pipeline.stats();
-    const auto msgs = static_cast<double>(s.pfcp_messages);
+    const auto all = static_cast<double>(s.pfcp_messages + s.ngap_messages);
+    // Every rate is per signalling message (PFCP + NGAP), so it stays finite and
+    // comparable whichever interfaces the capture carries.
+    const auto ns_per_msg = all > 0 ? secs * 1e9 / all : 0.0;
     std::cout << "{\"frames\":" << s.frames << ",\"pfcp_messages\":" << s.pfcp_messages
-              << ",\"events\":" << s.events << ",\"json_bytes\":" << sink.bytes()
-              << ",\"seconds\":" << secs << ",\"pfcp_msgs_per_sec\":" << (msgs / secs)
-              << ",\"ns_per_pfcp_msg\":" << (secs * 1e9 / msgs)
+              << ",\"ngap_messages\":" << s.ngap_messages << ",\"events\":" << s.events
+              << ",\"json_bytes\":" << sink.bytes() << ",\"seconds\":" << secs
+              << ",\"signalling_msgs_per_sec\":" << (all / secs)
+              << ",\"ns_per_signalling_msg\":" << ns_per_msg
               << ",\"frames_per_sec\":" << (static_cast<double>(s.frames) / secs) << "}\n";
     return kExitOk;
 }

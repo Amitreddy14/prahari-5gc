@@ -28,6 +28,45 @@ struct PfcpContext {
     std::optional<std::size_t> far_count;
 };
 
+struct NgapContext {
+    std::string_view pdu_type;
+    std::uint8_t procedure_code{};
+    std::size_t ie_count{};
+    std::optional<std::uint32_t> gnb_id;
+    std::optional<std::uint8_t> gnb_id_bits;
+    std::optional<std::string> plmn;
+    std::optional<std::string> ran_node_name;
+};
+
+struct NasContext {
+    std::string_view epd;  // "5GMM" | "5GSM"
+    std::uint8_t security_header{};
+    bool integrity_protected{};
+    bool ciphered{};
+    bool decoded{};
+    std::uint8_t message_type{};
+    std::string_view message;
+    std::string_view registration_type;  // empty = omit
+    std::string_view identity_type;      // empty = omit
+    std::optional<bool> suci_null_scheme;
+    std::optional<std::uint8_t> sm_message_type;
+    std::string_view sm_message;  // empty = omit
+    std::optional<std::uint8_t> selected_ciphering;
+    std::optional<std::uint8_t> selected_integrity;
+    std::optional<std::uint8_t> mm_cause;
+};
+
+struct UeIds {
+    std::optional<std::uint32_t> ran_ue_ngap_id;
+    std::optional<std::uint64_t> amf_ue_ngap_id;
+    std::optional<std::string> supi_hash;
+    std::optional<std::uint64_t> seid;
+    std::optional<std::uint8_t> pdu_session_id;
+    [[nodiscard]] bool empty() const noexcept {
+        return !ran_ue_ngap_id && !amf_ue_ngap_id && !supi_hash && !seid && !pdu_session_id;
+    }
+};
+
 struct Event {
     std::string event_id;
     std::uint64_t ts_ns{};
@@ -40,10 +79,12 @@ struct Event {
     Endpoint dst;
     std::size_t size_bytes{};
     std::string_view decode_status{"ok"};
-    std::optional<std::uint64_t> ue_seid;
+    UeIds ue;
     std::optional<std::uint32_t> sequence;
     std::optional<std::string_view> cause;
     std::optional<PfcpContext> pfcp;
+    std::optional<NgapContext> ngap;
+    std::optional<NasContext> nas;
 };
 
 // Appends one JSON object (no trailing newline) to `out`.

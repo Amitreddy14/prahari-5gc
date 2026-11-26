@@ -14,31 +14,6 @@ void append_uint(std::uint64_t v, std::string& out) {
     out.append(buf.data(), res.ptr);
 }
 
-void key(std::string_view k, std::string& out) {
-    out.push_back('"');
-    out.append(k);
-    out.append("\":");
-}
-
-void append_endpoint(const Endpoint& ep, std::string& out) {
-    out.append("{\"ip\":");
-    append_json_string(ep.ip, out);
-    out.append(",\"port\":");
-    append_uint(ep.port, out);
-    out.append(",\"nf\":");
-    append_json_string(ep.nf, out);
-    out.push_back('}');
-}
-
-void append_seid(std::string_view k, std::uint64_t seid, std::string& out) {
-    // SEIDs are u64: emitted as decimal strings because JSON numbers lose
-    // precision above 2^53 in most consumers.
-    key(k, out);
-    out.push_back('"');
-    append_uint(seid, out);
-    out.push_back('"');
-}
-
 }  // namespace
 
 void append_json_string(std::string_view s, std::string& out) {
@@ -66,98 +41,164 @@ void append_json_string(std::string_view s, std::string& out) {
     out.push_back('"');
 }
 
+namespace {
+
+// Writes `"key":value` members of one JSON object, handling the commas.
+class Obj {
+public:
+    explicit Obj(std::string& out) : out_(out) { out_.push_back('{'); }
+    Obj(const Obj&) = delete;
+    Obj& operator=(const Obj&) = delete;
+    Obj(Obj&&) = delete;
+    Obj& operator=(Obj&&) = delete;
+    ~Obj() { out_.push_back('}'); }
+
+    void str(std::string_view k, std::string_view v) {
+        key(k);
+        append_json_string(v, out_);
+    }
+    void num(std::string_view k, std::uint64_t v) {
+        key(k);
+        append_uint(v, out_);
+    }
+    void boolean(std::string_view k, bool v) {
+        key(k);
+        out_.append(v ? "true" : "false");
+    }
+    // u64 identifiers as decimal strings (JSON numbers lose precision above 2^53).
+    void id_str(std::string_view k, std::uint64_t v) {
+        key(k);
+        out_.push_back('"');
+        append_uint(v, out_);
+        out_.push_back('"');
+    }
+    void opt_num(std::string_view k, const auto& v) {
+        if (v) {
+            num(k, *v);
+        }
+    }
+    void opt_str(std::string_view k, std::string_view v) {
+        if (!v.empty()) {
+            str(k, v);
+        }
+    }
+    // Start a nested member; the caller builds the nested Obj next.
+    void key(std::string_view k) {
+        if (!first_) {
+            out_.push_back(',');
+        }
+        first_ = false;
+        out_.push_back('"');
+        out_.append(k);
+        out_.append("\":");
+    }
+
+private:
+    std::string& out_;
+    bool first_{true};
+};
+
+void endpoint(Obj& parent, std::string_view k, const Endpoint& ep, std::string& out) {
+    parent.key(k);
+    Obj o{out};
+    o.str("ip", ep.ip);
+    o.num("port", ep.port);
+    o.str("nf", ep.nf);
+}
+
+}  // namespace
+
 void append_json(const Event& e, std::string& out) {
-    out.append(R"({"schema_version":1,"event_id":)");
-    append_json_string(e.event_id, out);
-    out.append(",\"ts_ns\":");
-    append_uint(e.ts_ns, out);
-    out.append(",\"interface\":");
-    append_json_string(e.interface, out);
-    out.append(",\"protocol\":");
-    append_json_string(e.protocol, out);
-    out.append(",\"message\":");
-    append_json_string(e.message, out);
-    out.append(",\"message_code\":");
-    append_uint(e.message_code, out);
-    out.append(",\"direction\":");
-    append_json_string(e.direction, out);
-    out.append(",\"src\":");
-    append_endpoint(e.src, out);
-    out.append(",\"dst\":");
-    append_endpoint(e.dst, out);
-    out.append(",\"size_bytes\":");
-    append_uint(e.size_bytes, out);
-    out.append(",\"decode_status\":");
-    append_json_string(e.decode_status, out);
-    if (e.ue_seid) {
-        out.append(",\"ue\":{");
-        append_seid("seid", *e.ue_seid, out);
-        out.push_back('}');
+    Obj o{out};
+    o.num("schema_version", 1);
+    o.str("event_id", e.event_id);
+    o.num("ts_ns", e.ts_ns);
+    o.str("interface", e.interface);
+    o.str("protocol", e.protocol);
+    o.str("message", e.message);
+    o.num("message_code", e.message_code);
+    o.str("direction", e.direction);
+    endpoint(o, "src", e.src, out);
+    endpoint(o, "dst", e.dst, out);
+    o.num("size_bytes", e.size_bytes);
+    o.str("decode_status", e.decode_status);
+    if (!e.ue.empty()) {
+        o.key("ue");
+        Obj u{out};
+        u.opt_num("ran_ue_ngap_id", e.ue.ran_ue_ngap_id);
+        u.opt_num("amf_ue_ngap_id", e.ue.amf_ue_ngap_id);
+        if (e.ue.supi_hash) {
+            u.str("supi_hash", *e.ue.supi_hash);
+        }
+        if (e.ue.seid) {
+            u.id_str("seid", *e.ue.seid);
+        }
+        u.opt_num("pdu_session_id", e.ue.pdu_session_id);
     }
-    if (e.sequence) {
-        out.append(",\"sequence\":");
-        append_uint(*e.sequence, out);
-    }
+    o.opt_num("sequence", e.sequence);
     if (e.cause) {
-        out.append(",\"cause\":");
-        append_json_string(*e.cause, out);
+        o.str("cause", *e.cause);
     }
     if (e.pfcp) {
         const auto& p = *e.pfcp;
-        out.append(",\"pfcp\":{");
-        bool first = true;
-        auto sep = [&] {
-            if (!first) {
-                out.push_back(',');
-            }
-            first = false;
-        };
+        o.key("pfcp");
+        Obj c{out};
         if (p.cp_seid) {
-            sep();
-            append_seid("cp_seid", *p.cp_seid, out);
+            c.id_str("cp_seid", *p.cp_seid);
         }
         if (p.up_seid) {
-            sep();
-            append_seid("up_seid", *p.up_seid, out);
+            c.id_str("up_seid", *p.up_seid);
         }
-        if (!p.session_state.empty()) {
-            sep();
-            key("session_state", out);
-            append_json_string(p.session_state, out);
-        }
+        c.opt_str("session_state", p.session_state);
         if (p.session_known) {
-            sep();
-            key("session_known", out);
-            out.append(*p.session_known ? "true" : "false");
+            c.boolean("session_known", *p.session_known);
         }
         if (p.node_id) {
-            sep();
-            key("node_id", out);
-            append_json_string(*p.node_id, out);
+            c.str("node_id", *p.node_id);
         }
-        if (p.cause_code) {
-            sep();
-            key("cause_code", out);
-            append_uint(*p.cause_code, out);
-        }
-        if (p.ie_count) {
-            sep();
-            key("ie_count", out);
-            append_uint(*p.ie_count, out);
-        }
-        if (p.pdr_count) {
-            sep();
-            key("pdr_count", out);
-            append_uint(*p.pdr_count, out);
-        }
-        if (p.far_count) {
-            sep();
-            key("far_count", out);
-            append_uint(*p.far_count, out);
-        }
-        out.push_back('}');
+        c.opt_num("cause_code", p.cause_code);
+        c.opt_num("ie_count", p.ie_count);
+        c.opt_num("pdr_count", p.pdr_count);
+        c.opt_num("far_count", p.far_count);
     }
-    out.push_back('}');
+    if (e.ngap) {
+        const auto& n = *e.ngap;
+        o.key("ngap");
+        Obj c{out};
+        c.str("pdu_type", n.pdu_type);
+        c.num("procedure_code", n.procedure_code);
+        c.num("ie_count", n.ie_count);
+        c.opt_num("gnb_id", n.gnb_id);
+        c.opt_num("gnb_id_bits", n.gnb_id_bits);
+        if (n.plmn) {
+            c.str("plmn", *n.plmn);
+        }
+        if (n.ran_node_name) {
+            c.str("ran_node_name", *n.ran_node_name);
+        }
+    }
+    if (e.nas) {
+        const auto& n = *e.nas;
+        o.key("nas");
+        Obj c{out};
+        c.str("epd", n.epd);
+        c.num("security_header", n.security_header);
+        c.boolean("integrity_protected", n.integrity_protected);
+        c.boolean("ciphered", n.ciphered);
+        c.boolean("decoded", n.decoded);
+        c.num("message_type", n.message_type);
+        c.str("message", n.message);
+        c.opt_str("registration_type", n.registration_type);
+        c.opt_str("identity_type", n.identity_type);
+        if (n.suci_null_scheme) {
+            c.boolean("suci_null_scheme", *n.suci_null_scheme);
+        }
+        c.opt_num("sm_message_type", n.sm_message_type);
+        c.opt_str("sm_message", n.sm_message);
+        c.opt_num("selected_ciphering", n.selected_ciphering);
+        c.opt_num("selected_integrity", n.selected_integrity);
+        c.opt_num("mm_cause", n.mm_cause);
+    }
 }
 
 namespace {

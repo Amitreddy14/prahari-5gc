@@ -72,6 +72,41 @@ class PfcpInfo(_Strict):
     far_count: Count16 | None = None
 
 
+NgapPduType = Literal["initiating", "successful", "unsuccessful"]
+RegistrationType = Literal["initial", "mobility", "periodic", "emergency", "other"]
+IdentityType = Literal["none", "SUCI", "5G-GUTI", "IMEI", "5G-S-TMSI", "IMEISV", "other"]
+Byte = Annotated[int, Field(ge=0, le=255)]
+Nibble = Annotated[int, Field(ge=0, le=15)]
+
+
+class NgapInfo(_Strict):
+    pdu_type: NgapPduType | None = None
+    procedure_code: Byte | None = None
+    ie_count: Count16 | None = None
+    gnb_id: Annotated[int, Field(ge=0, le=4_294_967_295)] | None = None
+    gnb_id_bits: Annotated[int, Field(ge=22, le=32)] | None = None
+    plmn: Annotated[str, Field(pattern=r"^[0-9]{5,6}$")] | None = None
+    ran_node_name: Annotated[str, Field(max_length=150)] | None = None
+
+
+class NasInfo(_Strict):
+    epd: Literal["5GMM", "5GSM"] | None = None
+    security_header: Annotated[int, Field(ge=0, le=4)] | None = None
+    integrity_protected: bool | None = None
+    ciphered: bool | None = None
+    decoded: bool | None = None
+    message_type: Byte | None = None
+    message: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+    registration_type: RegistrationType | None = None
+    identity_type: IdentityType | None = None
+    suci_null_scheme: bool | None = None
+    sm_message_type: Byte | None = None
+    sm_message: Annotated[str, Field(max_length=64)] | None = None
+    selected_ciphering: Nibble | None = None
+    selected_integrity: Nibble | None = None
+    mm_cause: Byte | None = None
+
+
 class Labels(_Strict):
     is_attack: bool
     attack_id: Annotated[str, Field(pattern=r"^(N2|N4|SBI|UE)-[0-9]{2}$")] | None = None
@@ -96,6 +131,8 @@ class SignallingEvent(_Strict):
     cause: Annotated[str, Field(max_length=64)] | None = None
     sbi: SbiInfo | None = None
     pfcp: PfcpInfo | None = None
+    ngap: NgapInfo | None = None
+    nas: NasInfo | None = None
     labels: Labels | None = None
 
     @classmethod

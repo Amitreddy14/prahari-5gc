@@ -216,6 +216,137 @@
         }
       }
     },
+    "ngap": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "N2 NGAP context. Present on NGAP events.",
+      "properties": {
+        "pdu_type": {
+          "enum": [
+            "initiating",
+            "successful",
+            "unsuccessful"
+          ]
+        },
+        "procedure_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "ie_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "gnb_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "From Global RAN Node ID (NG Setup)"
+        },
+        "gnb_id_bits": {
+          "type": "integer",
+          "minimum": 22,
+          "maximum": 32
+        },
+        "plmn": {
+          "type": "string",
+          "pattern": "^[0-9]{5,6}$",
+          "description": "MCC+MNC of the Global RAN Node ID"
+        },
+        "ran_node_name": {
+          "type": "string",
+          "maxLength": 150
+        }
+      }
+    },
+    "nas": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The NAS message carried in the NGAP NAS-PDU IE, if any. Never contains subscriber identity; SUPIs appear only as ue.supi_hash.",
+      "properties": {
+        "epd": {
+          "enum": [
+            "5GMM",
+            "5GSM"
+          ]
+        },
+        "security_header": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "integrity_protected": {
+          "type": "boolean"
+        },
+        "ciphered": {
+          "type": "boolean"
+        },
+        "decoded": {
+          "type": "boolean",
+          "description": "False when ciphered with a non-null or unknown algorithm"
+        },
+        "message_type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "registration_type": {
+          "enum": [
+            "initial",
+            "mobility",
+            "periodic",
+            "emergency",
+            "other"
+          ]
+        },
+        "identity_type": {
+          "enum": [
+            "none",
+            "SUCI",
+            "5G-GUTI",
+            "IMEI",
+            "5G-S-TMSI",
+            "IMEISV",
+            "other"
+          ]
+        },
+        "suci_null_scheme": {
+          "type": "boolean",
+          "description": "True when the SUCI was not concealed (SUPI recoverable by any observer)"
+        },
+        "sm_message_type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "sm_message": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "selected_ciphering": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15,
+          "description": "NEA algorithm chosen by Security Mode Command"
+        },
+        "selected_integrity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "mm_cause": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
     "labels": {
       "type": "object",
       "additionalProperties": false,

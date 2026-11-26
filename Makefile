@@ -13,8 +13,8 @@ help:
 	@echo "probe-release  Release build + tests"
 	@echo "tidy           clang-tidy over probe sources"
 	@echo "fuzz           Run every fuzzer for FUZZ_SECONDS each (default 60)"
-	@echo "bench          Probe PFCP throughput on PCAP (default: the test fixture)"
-	@echo "crosscheck     Probe vs tshark, field by field, on PCAP"
+	@echo "bench          Probe throughput (PFCP + NGAP) on PCAP (default: the N4 fixture)"
+	@echo "crosscheck     Probe vs tshark, field by field, on CROSSCHECK_PCAPS (both fixtures)"
 	@echo "probe-events   Follow live probe events from the running testbed"
 	@echo "analytics      ruff + mypy + pytest for the Python package"
 	@echo "lint           shellcheck + clang-format check"
@@ -40,18 +40,19 @@ tidy: probe-asan
 
 fuzz:
 	cd probe && cmake --preset fuzz && cmake --build --preset fuzz && \
-	for f in pfcp pfcp_ie frame; do \
+	for f in pfcp pfcp_ie frame ngap nas; do \
 	  mkdir -p build/fuzz/corpus-$$f && cp fuzz/corpus/$$f/* build/fuzz/corpus-$$f/ && \
 	  ./build/fuzz/fuzz_$$f -max_total_time=$(FUZZ_SECONDS) build/fuzz/corpus-$$f || exit 1; \
 	done
 
 PCAP ?= probe/tests/data/n4-lifecycle.pcap
+CROSSCHECK_PCAPS ?= probe/tests/data/n4-lifecycle.pcap probe/tests/data/n2-registration.pcap
 
 bench: probe-release
-	./probe/build/release/prahari-probe bench --pcap $(PCAP) --filter "udp port 8805" --repeat 2000
+	./probe/build/release/prahari-probe bench --pcap $(PCAP) --filter "udp port 8805 or sctp" --repeat 2000
 
 crosscheck: probe-release
-	python3 probe/tools/crosscheck_tshark.py --probe probe/build/release/prahari-probe $(PCAP)
+	python3 probe/tools/crosscheck_tshark.py --probe probe/build/release/prahari-probe $(CROSSCHECK_PCAPS)
 
 probe-events:
 	tail -f testbed/events/events.jsonl
