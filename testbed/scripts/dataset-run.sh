@@ -28,17 +28,18 @@ mkdir -p "runs/${NAME}"
 # Fresh event log so the dataset holds only this campaign's traffic.
 : > events/events.jsonl
 
-# 1. Run the campaign (benign UE churn + scheduled attacks) from the host.
-#    The campaign package needs no install: run it straight from the source tree.
+# 1. Run the campaign (benign UE churn + scheduled attacks) from the host. Attack run
+#    manifests go in a manifests/ subdir; campaign.json stays at runs/<name>/ so the
+#    labeller (which globs *.json) only ever sees run manifests.
 PYTHONPATH=../campaign/src python3 -m prahari_campaign.cli run \
-    --spec "${SPEC}" --out "runs/${NAME}" --container-out "/runs/${NAME}"
+    --spec "${SPEC}" --out "runs/${NAME}" --container-out "/runs/${NAME}/manifests"
 sleep 6   # let the probe flush the tail of the capture
 
 PROBE_VER="$(dc exec -T probe prahari-probe --version 2>/dev/null | tr -d '\r' | awk '{print $2}')"
 
 # 2. Label the probe's events with the run manifests (inside the attacker container).
 atk python -m prahari_analytics.labels \
-    --events /events/events.jsonl --runs "/runs/${NAME}" \
+    --events /events/events.jsonl --runs "/runs/${NAME}/manifests" \
     --out "/runs/${NAME}/labelled.jsonl" --validate | sed 's/^/  /'
 
 # 3. Pack into Parquet + dataset card.

@@ -57,12 +57,12 @@ including benign-looking side effects of an attack, which stay benign on purpose
 | --- | --- | --- |
 | `event_id` | string | probe event UUID |
 | `ts_ns` | int64 | capture timestamp (ns since epoch) |
-| `interface` | string | N2 | N4 | SBI |
-| `protocol` | string | NGAP | NAS-5GS | PFCP | HTTP2 |
+| `interface` | string | N2 \| N4 \| SBI |
+| `protocol` | string | NGAP \| NAS-5GS \| PFCP \| HTTP2 |
 | `message` | string | decoded message name |
 | `message_code` | int64 | numeric message/procedure code |
-| `direction` | string | request | response | indication | unknown |
-| `decode_status` | string | ok | truncated | malformed | ... |
+| `direction` | string | request \| response \| indication \| unknown |
+| `decode_status` | string | ok \| truncated \| malformed \| ... |
 | `size_bytes` | int64 | signalling payload size |
 | `sequence` | int64 | PFCP sequence number, if any |
 | `cause` | string | cause string, if any |
@@ -81,10 +81,10 @@ including benign-looking side effects of an attack, which stay benign on purpose
 | `sbi_path` | string | sanitised SBI path (identities masked) |
 | `sbi_status` | int64 | HTTP status |
 | `sbi_service` | string | 3GPP service operation |
-| `pfcp_session_state` | string | establishing | active | deleted |
+| `pfcp_session_state` | string | establishing \| active \| deleted |
 | `pfcp_cause_code` | int64 | PFCP cause |
 | `pfcp_node_id` | string | PFCP node id |
-| `ngap_pdu_type` | string | initiating | successful | unsuccessful |
+| `ngap_pdu_type` | string | initiating \| successful \| unsuccessful |
 | `ngap_procedure_code` | int64 | NGAP procedure code |
 | `ngap_gnb_id` | int64 | global gNB id |
 | `ngap_ran_node_name` | string | RAN node name |

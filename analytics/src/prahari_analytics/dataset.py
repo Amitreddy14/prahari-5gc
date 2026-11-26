@@ -183,7 +183,9 @@ def dataset_card(
         lines.append(f"| {proto} | {n} |")
     lines += ["", "## Columns", "", "| column | type | description |", "| --- | --- | --- |"]
     for col, typ, _p, desc in FIELDS:
-        lines.append(f"| `{col}` | {typ} | {desc} |")
+        # Escape pipes so values like "N2 | N4 | SBI" don't split the Markdown table.
+        safe = desc.replace("|", "\\|")
+        lines.append(f"| `{col}` | {typ} | {safe} |")
     lines += [
         "",
         "## Intended use and limits",

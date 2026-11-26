@@ -12,7 +12,10 @@ Newest first. Decisions, bugs, surprises and context that the code alone does no
 - **Sandbox has no SCTP** (`Protocol not supported`), so live N2 outcomes are deferred to the Docker testbed (which already runs gNB↔AMF over SCTP); in-sandbox validation is the encoder proofs + scenario orchestration (fake association) + the dataset pipeline on 687 real fixture events (687×40, 23 attack, 0 schema failures).
 - Versions: probe 0.6.0, attacker image 0.2.0, analytics 0.1.0, attacks 0.2.0. New CI job `campaign`; `probe-contract` now cross-checks NGAP/NAS too.
 
-**Bug**: pycrate SUCI envelope encoder (`FGSID.encode`) is fiddly; the robust path is to patch the MSIN on the parsed template via `['5GSID']['5GSID']['Value']['Output'].get_alt().set_val(digits)` and re-encode, not to build the envelope from scratch.
+**Bugs**:
+- pycrate SUCI envelope encoder (`FGSID.encode`) is fiddly; the robust path is to patch the MSIN on the parsed template via `['5GSID']['5GSID']['Value']['Output'].get_alt().set_val(digits)` and re-encode, not to build the envelope from scratch.
+- `_ng_setup` did a single `recv()`; a fresh SCTP association delivers `COMM_UP` as a notification first, which `recv()` returns as None → "no response" → the association was closed before the AMF's NG Setup Response reached the wire. Hid in N2-01 (floods, keeps assoc open, `_drain` collects the response) but broke the N2-02 rogue-gNB verdict (first run: 3 NGSetupReq sent, 0 responses captured). Fixed by looping until an NGAP reply decodes or the budget passes; regression test added. Dataset labels unaffected (labelled by attacker IP + window, not verdict).
+- First full testbed campaign: 12,015 rows, 5090 attack / 6925 benign, all 9 classes. N2-01 storm confirmed the AMF accepts the rogue gNB and answers each Initial UE Message with an auth challenge (502 events) — live confirmation of the N2 encoder/SCTP chain against real Open5GS.
 
 ## 2026-11-26 — Phase 4a (attack injector: N4 + SBI, labelling)
 

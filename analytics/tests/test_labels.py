@@ -91,6 +91,14 @@ def test_dry_runs_are_skipped(tmp_path: Path) -> None:
     assert [r.run_id for r in load_runs([tmp_path])] == ["real"]
 
 
+def test_non_run_json_is_skipped(tmp_path: Path) -> None:
+    # A campaign.json sits beside the run manifests; it has no run_id and must be ignored.
+    base = {"attack_id": "SBI-01", "attacker_ip": ATTACKER, "started_ns": S, "ended_ns": 2 * S}
+    (tmp_path / "run.json").write_text(json.dumps({**base, "run_id": "real"}))
+    (tmp_path / "campaign.json").write_text(json.dumps({"campaign": "demo", "attacks": []}))
+    assert [r.run_id for r in load_runs([tmp_path])] == ["real"]
+
+
 def test_stream_skips_partial_lines_and_output_matches_the_model() -> None:
     r = run("r1", 100 * S, 110 * S)
     lines = [

@@ -68,13 +68,15 @@ class Run:
 
 
 def load_runs(paths: Iterable[Path]) -> list[Run]:
-    """Manifests from files or directories. Dry runs never sent anything: skipped."""
+    """Run manifests from files or directories. Dry runs never sent anything: skipped.
+    Other JSON in the directory (a campaign.json, stray output) is skipped too: a run
+    manifest is identified by its run_id and started_ns."""
     runs: list[Run] = []
     for p in paths:
         files = sorted(p.glob("*.json")) if p.is_dir() else [p]
         for f in files:
             m = json.loads(f.read_text(encoding="utf-8"))
-            if m.get("dry_run"):
+            if m.get("dry_run") or "run_id" not in m or "started_ns" not in m:
                 continue
             runs.append(Run.from_manifest(m))
     return sorted(runs, key=lambda r: r.start_ns)

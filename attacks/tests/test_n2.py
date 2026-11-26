@@ -28,10 +28,14 @@ DOWNLINK_NAS = bytes.fromhex(
 )
 
 
-class FakeSock:
-    """Minimal pysctp one-to-one socket: records sends, replays canned replies."""
+NOTIFY = object()  # sentinel: sctp_recv yields an SCTP notification, not data
 
-    def __init__(self, replies: list[bytes]) -> None:
+
+class FakeSock:
+    """Minimal pysctp one-to-one socket: records sends, replays canned replies.
+    A NOTIFY item in the reply list is delivered as an SCTP notification (no data)."""
+
+    def __init__(self, replies: list) -> None:
         self.sent: list[bytes] = []
         self._replies = list(replies)
 
@@ -39,9 +43,14 @@ class FakeSock:
         self.sent.append(pdu)
 
     def sctp_recv(self, maxlen: int) -> tuple:
-        if self._replies:
-            return (("", 0), 0, self._replies.pop(0), None)
-        raise TimeoutError
+        if not self._replies:
+            raise TimeoutError
+        item = self._replies.pop(0)
+        if item is NOTIFY:
+            import sctp  # noqa: PLC0415
+
+            return (("", 0), sctp.FLAG_NOTIFICATION, b"", object())
+        return (("", 0), 0, item, None)
 
     def settimeout(self, t: float) -> None:
         pass
@@ -68,6 +77,13 @@ def test_rogue_gnb_records_ng_setup_verdict() -> None:
     assert m.outcome["accepted"] == 1
     assert m.outcome["setups"] == ["accepted"]
     assert len(sock.sent) == 1
+
+
+def test_ng_setup_skips_a_leading_notification_before_the_response() -> None:
+    # Regression: a fresh association delivers SCTP COMM_UP first; it must not be read
+    # as "no response" (which would close the association before the AMF replies).
+    m, _sock = _run(RogueGnb, RogueGnb.defaults(), [NOTIFY, NG_SETUP_RESPONSE])
+    assert m.outcome["setups"] == ["accepted"]
 
 
 def test_registration_storm_sends_setup_then_initial_ue_messages() -> None:

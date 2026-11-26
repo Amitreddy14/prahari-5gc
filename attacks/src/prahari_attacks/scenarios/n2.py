@@ -43,22 +43,32 @@ class _N2(Scenario):
     def _connect(self, ctx: Context) -> SctpAssociation:
         return ctx.guard.sctp_connect(ctx.params["amf"], NGAP_SCTP_PORT, source_ip=ctx.attacker_ip)
 
-    def _ng_setup(self, ctx: Context, assoc: SctpAssociation, gnb_id: int, name: str) -> str:
-        """Becomes a gNB on this association. Returns the AMF's verdict."""
+    def _ng_setup(
+        self, ctx: Context, assoc: SctpAssociation, gnb_id: int, name: str, budget: float = 3.0
+    ) -> str:
+        """Becomes a gNB on this association. Returns the AMF's verdict.
+
+        Keeps reading (and the association open) until an NGAP reply decodes or the budget
+        passes: `recv` returns None both on a timeout slice and on an SCTP notification
+        (e.g. COMM_UP on a fresh association), and a single read could consume the
+        notification and close before the NG Setup Response ever reaches the wire."""
         assoc.send(ngap.ng_setup_request(gnb_id, name=name))
         ctx.manifest.count("sent:NGSetupRequest")
-        reply = assoc.recv(3.0)
-        if reply is None:
-            return "no response"
-        try:
-            d = ngap.parse(reply)
-        except Exception:  # any decode failure is just an opaque reply
-            return "undecoded reply"
-        if d.pdu_type == "successfulOutcome":
-            ctx.manifest.count("response:NGSetupResponse")
-            return "accepted"
-        ctx.manifest.count("response:NGSetupFailure")
-        return f"rejected ({d.cause})" if d.cause else "rejected"
+        deadline = time.monotonic() + budget
+        while time.monotonic() < deadline:
+            reply = assoc.recv(max(0.1, deadline - time.monotonic()))
+            if reply is None:
+                continue  # timeout slice or an SCTP notification to skip
+            try:
+                d = ngap.parse(reply)
+            except Exception:  # any decode failure is just an opaque reply
+                return "undecoded reply"
+            if d.pdu_type == "successfulOutcome":
+                ctx.manifest.count("response:NGSetupResponse")
+                return "accepted"
+            ctx.manifest.count("response:NGSetupFailure")
+            return f"rejected ({d.cause})" if d.cause else "rejected"
+        return "no response"
 
     def _drain(self, ctx: Context, assoc: SctpAssociation, budget: float) -> None:
         """Reads and tallies whatever the AMF sends back within `budget` seconds."""
