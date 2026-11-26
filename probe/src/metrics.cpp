@@ -51,8 +51,8 @@ using Row = std::pair<std::string_view, std::uint64_t>;
 }  // namespace
 
 std::string render_metrics(const Stats& s, const pfcp::SessionTable& sessions,
-                           const ngap::UeTable& ues, std::size_t sbi_flows,
-                           const KafkaStats* kafka) {
+                           const ngap::UeTable& ues, std::size_t sbi_flows, const KafkaStats* kafka,
+                           const CaptureCounters* capture) {
     std::ostringstream o;
     Writer w{o};
     o << "# HELP prahari_probe_build_info Probe version.\n# TYPE prahari_probe_build_info gauge\n"
@@ -95,6 +95,16 @@ std::string render_metrics(const Stats& s, const pfcp::SessionTable& sessions,
               s.sbi_midstream_segments);
     w.counter("prahari_probe_sbi_tcp_gaps_total", "Unrecoverable TCP reassembly gaps.",
               s.sbi_tcp_gaps);
+    if (capture != nullptr) {
+        // Packets lost before the probe saw them: a dataset is only as good as this is low.
+        w.labelled("prahari_probe_capture_dropped_total",
+                   "Packets dropped before reaching the probe (libpcap counters).", "counter",
+                   "where",
+                   std::array{Row{"kernel_buffer", capture->dropped_kernel},
+                              Row{"interface", capture->dropped_interface}});
+        w.counter("prahari_probe_capture_received_total",
+                  "Packets that matched the capture filter (libpcap counter).", capture->received);
+    }
     if (kafka != nullptr) {
         w.labelled("prahari_probe_kafka_messages_total", "Kafka producer messages, by outcome.",
                    "counter", "outcome",

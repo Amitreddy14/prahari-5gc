@@ -188,7 +188,8 @@ TEST(Metrics, ServesPrometheusTextOnSlashMetrics) {
     prahari::ngap::UeTable ues;
     prahari::KafkaStats k;
     k.delivered = 5;
-    srv->publish(prahari::render_metrics(s, sessions, ues, 2, &k));
+    const prahari::CaptureCounters cap{1000, 3, 0};
+    srv->publish(prahari::render_metrics(s, sessions, ues, 2, &k, &cap));
 
     const auto resp = http_get(srv->port(), "/metrics");
     EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK", 0), 0U) << resp;
@@ -201,6 +202,9 @@ TEST(Metrics, ServesPrometheusTextOnSlashMetrics) {
     EXPECT_NE(resp.find("prahari_probe_kafka_messages_total{outcome=\"delivered\"} 5\n"),
               std::string::npos);
     EXPECT_NE(resp.find("# TYPE prahari_probe_frames_total counter"), std::string::npos);
+    EXPECT_NE(resp.find("prahari_probe_capture_dropped_total{where=\"kernel_buffer\"} 3\n"),
+              std::string::npos);
+    EXPECT_NE(resp.find("prahari_probe_capture_received_total 1000\n"), std::string::npos);
     EXPECT_EQ(srv->scrapes(), 1U);
 
     EXPECT_EQ(http_get(srv->port(), "/").rfind("HTTP/1.1 404", 0), 0U);
@@ -212,4 +216,18 @@ TEST(Metrics, BadListenAddressIsRejected) {
     EXPECT_FALSE(prahari::MetricsServer::start("localhost", err));
     EXPECT_FALSE(prahari::MetricsServer::start("not-an-ip:9464", err));
     EXPECT_FALSE(prahari::MetricsServer::start("127.0.0.1:70000", err));
+}
+
+TEST(Metrics, CaptureCountersOnlyWhenLive) {
+    // Offline files have no kernel buffer: no capture counters, and none rendered.
+    auto opened = prahari::PcapSource::open_file(
+        std::string{PRAHARI_TEST_DATA_DIR} + "/n4-lifecycle.pcap", "");
+    ASSERT_TRUE(opened.source);
+    EXPECT_FALSE(opened.source->capture_stats().available);
+    prahari::Stats s;
+    prahari::pfcp::SessionTable sessions;
+    prahari::ngap::UeTable ues;
+    const auto text = prahari::render_metrics(s, sessions, ues, 0, nullptr, nullptr);
+    EXPECT_EQ(text.find("capture_dropped"), std::string::npos);
+    EXPECT_EQ(text.find("kafka_messages"), std::string::npos);
 }

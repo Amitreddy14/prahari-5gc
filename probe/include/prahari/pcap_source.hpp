@@ -45,14 +45,25 @@ public:
     [[nodiscard]] Next next(Frame& out);
     [[nodiscard]] std::string last_error() const;
 
+    // libpcap's counters (live capture only): packets the kernel dropped because the
+    // capture buffer was full, and drops reported by the interface/driver.
+    struct CaptureStats {
+        bool available{};
+        std::uint64_t received{};
+        std::uint64_t dropped_kernel{};
+        std::uint64_t dropped_interface{};
+    };
+    [[nodiscard]] CaptureStats capture_stats() const;
+
     // Make a blocking next() return kEnd (safe from a signal handler).
     void stop() noexcept;
 
 private:
-    explicit PcapSource(pcap* handle, bool nanosecond);
+    PcapSource(pcap* handle, bool nanosecond, bool live);
 
     pcap* handle_{};
     bool nanosecond_{};
+    bool live_{};
     int raw_link_{};
     net::LinkType link_{net::LinkType::kEthernet};
     bool link_supported_{};

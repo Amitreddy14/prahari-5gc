@@ -1,0 +1,10 @@
+# Build context is the repo root; send only the two Python packages.
+*
+!attacks/pyproject.toml
+!attacks/README.md
+!attacks/src/
+!analytics/pyproject.toml
+!analytics/README.md
+!analytics/src/
+**/__pycache__
+**/*.egg-info

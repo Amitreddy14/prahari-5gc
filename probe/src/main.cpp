@@ -257,11 +257,19 @@ int cmd_run(const Options& o) {
         }
         std::cerr << "prahari-probe: metrics on http://" << o.metrics_listen << "/metrics\n";
     }
+    const auto capture_counters = [&src]() -> std::optional<prahari::CaptureCounters> {
+        const auto c = src.capture_stats();
+        if (!c.available) {
+            return std::nullopt;
+        }
+        return prahari::CaptureCounters{c.received, c.dropped_kernel, c.dropped_interface};
+    };
     const auto publish_metrics = [&] {
         if (metrics) {
-            metrics->publish(prahari::render_metrics(pipeline->stats(), pipeline->sessions(),
-                                                     pipeline->ues(), pipeline->sbi_flows(),
-                                                     kafka ? &kafka->stats() : nullptr));
+            const auto cap = capture_counters();
+            metrics->publish(prahari::render_metrics(
+                pipeline->stats(), pipeline->sessions(), pipeline->ues(), pipeline->sbi_flows(),
+                kafka ? &kafka->stats() : nullptr, cap ? &*cap : nullptr));
         }
     };
 
@@ -332,6 +340,11 @@ int cmd_run(const Options& o) {
         std::cerr << prahari::stats_json(pipeline->stats(), pipeline->sessions(), pipeline->ues(),
                                          pipeline->sbi_flows())
                   << "\n";
+        if (const auto cap = capture_counters()) {
+            std::cerr << "{\"capture_received\":" << cap->received
+                      << ",\"capture_dropped_kernel\":" << cap->dropped_kernel
+                      << ",\"capture_dropped_interface\":" << cap->dropped_interface << "}\n";
+        }
         if (kafka) {
             const auto& k = kafka->stats();
             std::cerr << "{\"kafka_produced\":" << k.produced

@@ -2,6 +2,27 @@
 
 Newest first. Decisions, bugs, surprises and context that the code alone does not show.
 
+## 2026-11-26 — Phase 4a (attack injector: N4 + SBI, labelling)
+
+**Decisions** (ADR-0008)
+- Phase 4 split: **4a** injector framework + N4/SBI attacks + labeller; **4b** N2 attacks, benign generator, Parquet dataset.
+- Injector in Python (`attacks/`, `prahari-attack`), hand-built PFCP, `h2` for SBI. Guard: constant 172.22.0.0/24 allowlist on every socket (targets *and* spoofed sources), narrow-only, plus a `PRAHARI_LAB=1` interlock. Attacker container at 172.22.0.40 (reserved since Phase 0), profile `attack`, NET_RAW only, not on `obs`.
+- Labels: attacker address or reserved PFCP sequence markers (0xA00000-0xFFFFFF) inside the run window (−1 s/+5 s); markers authoritative, else closest window. Attack *effects* in other NFs' traffic stay benign.
+- Validated against real Open5GS v2.7.7 NFs run natively on loopback aliases (`/opt/open5gs`, the testbed's own yaml), probe on `lo`. No SCTP in the sandbox → N2 attacks wait for 4b.
+
+**Findings (real NF behaviour)**
+- UPF accepts association from any node; creates 100/100 rogue sessions in 1 s; does not check session ownership: spoofed-SMF scans delete (40/40 in 8.2 s) or DROP-rewrite every live session. SEIDs random but in ~1-4096.
+- **UPF aborts under ~1,000 PFCP msg/s** (≥5.5 k msgs): timer pool (16,384) exhausted → `ogs_assert(new)` in `ogs_pfcp_xact_receive` = **CVE-2026-106807** (GHSA-96p4-93rj-w6w5), fixed on upstream main. Reproduced independently before looking it up. Injector defaults 500/s to stay below it.
+- UPF does not implement CP-side Association Release ("Not implemented PFCP message type[9]").
+- NRF: no auth; discovery filters by the *claimed* requester type (lie → full map in 2.2 s); rogue AUSF registered and discoverable; deregistered BSF hidden ~8 s until its heartbeat 404s and it re-registers. NRF survived 300 fuzz requests. Open5GS NFListRetrieval uses `_links.item` (singular).
+
+**Bugs caught**
+- Schema `size_bytes` ≤ 65,535 broke on a 70 KB SBI-04 body → widened to u32.
+- Probe live capture silently lost packets in a long lab session (offline decode of tcpdump's copy was complete). Now: 32 MiB pcap buffer + `prahari_probe_capture_dropped_total`; re-test 0 drops on 4,096+4,096 burst. Root cause of the original loss not proven, but loss can no longer be silent.
+- Injector sockets let the kernel pick the source (loopback → NRF's own IP): now bind the attacker address. Rogue PFCP node must listen on 8805 and answer heartbeats or the UPF splits replies/drops it.
+- Labeller: margins overlapped between back-to-back runs → closest-window rule.
+
+
 ## 2026-11-26 — Phase 3b (probe: SBI, Kafka, metrics)
 
 **Decisions** (ADR-0007)

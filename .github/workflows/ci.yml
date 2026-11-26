@@ -108,6 +108,30 @@ jobs:
         env:
           PRAHARI_PROBE_BIN: ${{ github.workspace }}/probe/build/release/prahari-probe
         run: pip install -e ".[dev]" && pytest -rs tests/test_probe_output.py
+      - name: Injector's PFCP messages decode in the C++ probe
+        working-directory: attacks
+        env:
+          PRAHARI_PROBE_BIN: ${{ github.workspace }}/probe/build/release/prahari-probe
+        run: pip install -e ".[dev]" && pytest -rs tests/test_pfcp.py
+
+  attacks:
+    # The injector: lint, strict types, tests (allowlist, PFCP encoder, h2c, CLI).
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: attacks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: attacks/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - run: pytest
 
   analytics:
     name: analytics (py${{ matrix.python }})
@@ -137,7 +161,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compose file is valid
         working-directory: testbed
-        run: cp .env.example .env && docker compose config -q
+        run: cp .env.example .env && docker compose config -q && docker compose --profile attack config -q
       - name: NF and UERANSIM configs are valid YAML
         run: |
           python3 -c "import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]; print(len(sys.argv) - 1, 'files ok')" \
@@ -168,6 +192,8 @@ jobs:
         run: docker compose up -d
       - name: Smoke test
         run: bash testbed/scripts/smoke.sh
+      - name: Attack check (injector + probe + labeller, non-destructive)
+        run: bash testbed/scripts/attack-check.sh
       - name: Logs on failure
         if: failure()
         working-directory: testbed
@@ -180,6 +206,7 @@ jobs:
           path: |
             testbed/captures/*.pcap
             testbed/events/*.jsonl
+            testbed/runs/
           if-no-files-found: ignore
           retention-days: 7
       - name: Tear down
