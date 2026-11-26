@@ -33,7 +33,12 @@ fi
 echo "Prahari-5GC attack check (Phase 4a)"
 
 # 1. Attacker container up, at its reserved address, with the guard armed.
+# The container runs as root with every capability dropped except NET_RAW, which
+# also drops CAP_DAC_OVERRIDE -- so unlike normal root it cannot write into a
+# host directory it doesn't own. Make the mount world-writable; it holds nothing
+# but disposable run manifests.
 mkdir -p runs
+chmod 777 runs
 dc --profile attack up -d --build attacker >/dev/null 2>&1 || true
 if [ "$(atk printenv PRAHARI_LAB 2>/dev/null | tr -d '\r')" = "1" ]; then
     ok "attacker container up at 172.22.0.40 ($(atk prahari-attack --version | tr -d '\r'))"
