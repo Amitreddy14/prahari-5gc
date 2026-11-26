@@ -177,6 +177,24 @@ void append_json(const Event& e, std::string& out) {
             c.str("ran_node_name", *n.ran_node_name);
         }
     }
+    if (e.sbi) {
+        const auto& b = *e.sbi;
+        o.key("sbi");
+        Obj c{out};
+        if (!b.method.empty()) {
+            c.str("method", b.method);
+        }
+        c.str("path", b.path);
+        if (b.status) {
+            c.num("status", static_cast<std::uint64_t>(*b.status));
+        }
+        if (!b.service.empty()) {
+            c.str("service", b.service);
+        }
+        if (!b.content_type.empty()) {
+            c.str("content_type", b.content_type);
+        }
+    }
     if (e.nas) {
         const auto& n = *e.nas;
         o.key("nas");

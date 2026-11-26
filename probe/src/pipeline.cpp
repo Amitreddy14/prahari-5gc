@@ -9,6 +9,7 @@
 #include "prahari/ngap.hpp"
 #include "prahari/pfcp.hpp"
 #include "prahari/pfcp_ie.hpp"
+#include "prahari/sbi.hpp"
 #include <arpa/inet.h>
 
 namespace prahari {
@@ -171,7 +172,8 @@ void StreamSink::flush() {
 
 // ---------------------------------------------------------------------------- stats
 
-std::string stats_json(const Stats& s, const pfcp::SessionTable& t, const ngap::UeTable& u) {
+std::string stats_json(const Stats& s, const pfcp::SessionTable& t, const ngap::UeTable& u,
+                       std::size_t sbi_flows) {
     std::ostringstream o;
     o << "{\"frames\":" << s.frames << ",\"bytes\":" << s.bytes
       << ",\"link_errors\":" << s.link_errors << ",\"not_ip\":" << s.not_ip << ",\"udp\":" << s.udp
@@ -183,7 +185,16 @@ std::string stats_json(const Stats& s, const pfcp::SessionTable& t, const ngap::
       << ",\"nas_decode_errors\":" << s.nas_decode_errors << ",\"supi_hashed\":" << s.supi_hashed
       << ",\"supi_not_hashed\":" << s.supi_not_hashed << ",\"pfcp_messages\":" << s.pfcp_messages
       << ",\"pfcp_decode_errors\":" << s.pfcp_decode_errors
-      << ",\"pfcp_unknown_session\":" << s.pfcp_unknown_session << ",\"events\":" << s.events
+      << ",\"pfcp_unknown_session\":" << s.pfcp_unknown_session
+      << ",\"sbi_segments\":" << s.sbi_segments
+      << ",\"sbi_midstream_segments\":" << s.sbi_midstream_segments
+      << ",\"sbi_flows_opened\":" << s.sbi_flows_opened
+      << ",\"sbi_flows_closed\":" << s.sbi_flows_closed
+      << ",\"sbi_flows_expired\":" << s.sbi_flows_expired
+      << ",\"sbi_flows_dropped_full\":" << s.sbi_flows_dropped_full
+      << ",\"sbi_flows_open\":" << sbi_flows << ",\"sbi_tcp_gaps\":" << s.sbi_tcp_gaps
+      << ",\"sbi_http2_errors\":" << s.sbi_http2_errors << ",\"sbi_requests\":" << s.sbi_requests
+      << ",\"sbi_responses\":" << s.sbi_responses << ",\"events\":" << s.events
       << ",\"sessions_tracked\":" << t.size() << ",\"sessions_active\":" << t.active()
       << ",\"sessions_expired\":" << t.expired_establishing()
       << ",\"sessions_dropped_full\":" << t.dropped_table_full() << ",\"ue_contexts\":" << u.size()
@@ -197,7 +208,11 @@ std::string stats_json(const Stats& s, const pfcp::SessionTable& t, const ngap::
 void Pipeline::emit(const Event& e) {
     line_.clear();
     append_json(e, line_);
-    sink_.write(line_);
+    if (e.ue.supi_hash) {
+        sink_.write_keyed(line_, *e.ue.supi_hash);
+    } else {
+        sink_.write(line_);
+    }
     ++stats_.events;
 }
 
@@ -222,7 +237,12 @@ void Pipeline::on_frame(std::uint64_t ts_ns, net::LinkType link,
                 on_pfcp(ts_ns, p);
             }
             break;
-        case net::Transport::kTcp: ++stats_.tcp; break;
+        case net::Transport::kTcp:
+            ++stats_.tcp;
+            if (sbi_ports_.contains(p.src_port) || sbi_ports_.contains(p.dst_port)) {
+                on_sbi_segment(ts_ns, p);
+            }
+            break;
         case net::Transport::kSctp:
             ++stats_.sctp;
             stats_.sctp_data_chunks += p.sctp_data.size();
@@ -295,6 +315,9 @@ void Pipeline::on_pfcp(std::uint64_t ts_ns, const net::Packet& pkt) {
             sm.dst = pkt.dst;
             sm.header_seid = h.seid;
             sm.ts_ns = ts_ns;
+            if (summary && summary.value().has_user_id) {
+                sm.supi_hash = pseudonym(pfcp::user_id_imsi(summary.value().user_id));
+            }
             if (summary) {
                 if (const auto& fs = summary.value().f_seid; fs.has_value()) {
                     sm.f_seid = fs->seid;
@@ -310,6 +333,7 @@ void Pipeline::on_pfcp(std::uint64_t ts_ns, const net::Packet& pkt) {
                 ++stats_.pfcp_unknown_session;
             }
             ev.ue.seid = view.up_seid ? view.up_seid : view.cp_seid;
+            ev.ue.supi_hash = view.supi_hash;
         }
         ev.pfcp = ctx;
         emit(ev);
@@ -417,16 +441,11 @@ void Pipeline::on_ngap(std::uint64_t ts_ns, const net::Packet& pkt,
                 ue->cipher_alg = n.selected_ciphering;
             }
             if (n.supi) {
-                if (supi_) {
-                    ++stats_.supi_hashed;
-                    const auto h = supi_->hash(*n.supi);
-                    if (ue != nullptr) {
-                        ue->supi_hash = h;
-                    }
-                    ev.ue.supi_hash = h;
-                } else {
-                    ++stats_.supi_not_hashed;
+                auto h = pseudonym_of(*n.supi);
+                if (h && ue != nullptr) {
+                    ue->supi_hash = h;
                 }
+                ev.ue.supi_hash = std::move(h);
             }
         }
     }
@@ -444,6 +463,232 @@ void Pipeline::on_ngap(std::uint64_t ts_ns, const net::Packet& pkt,
         m.pdu_type == ngap::PduType::kSuccessful && m.ran_ue_ngap_id) {
         ues_.release(gnb, *m.ran_ue_ngap_id);
     }
+}
+
+// ---------------------------------------------------------------------------- SBI
+
+std::optional<std::string> Pipeline::pseudonym(const std::optional<std::string>& imsi) {
+    if (!imsi) {
+        return std::nullopt;
+    }
+    return pseudonym_of("imsi-" + *imsi);
+}
+
+std::optional<std::string> Pipeline::pseudonym_of(std::string_view supi) {
+    if (!supi_) {
+        ++stats_.supi_not_hashed;
+        return std::nullopt;
+    }
+    auto h = supi_->hash(supi);
+    if (h.empty()) {
+        ++stats_.supi_not_hashed;  // crypto failure: drop, never emit the raw identity
+        return std::nullopt;
+    }
+    ++stats_.supi_hashed;
+    return h;
+}
+
+void Pipeline::on_sbi_segment(std::uint64_t ts_ns, const net::Packet& pkt) {
+    ++stats_.sbi_segments;
+    sweep_sbi(ts_ns);
+    const tcp::SocketAddr src{pkt.src, pkt.src_port};
+    const tcp::SocketAddr dst{pkt.dst, pkt.dst_port};
+    const auto key = tcp::FlowKey::of(src, dst);
+    const bool syn = (pkt.tcp_flags & net::tcp_flag::kSyn) != 0;
+    const bool ack = (pkt.tcp_flags & net::tcp_flag::kAck) != 0;
+    const bool rst = (pkt.tcp_flags & net::tcp_flag::kRst) != 0;
+
+    auto it = sbi_flows_.find(key);
+    if (syn && !ack) {
+        // A client opening (or re-opening, on port reuse) a connection.
+        if (it != sbi_flows_.end() && it->second.client == src &&
+            it->second.client_isn == pkt.tcp_seq) {
+            // retransmitted SYN: fall through to the normal path
+        } else {
+            if (it != sbi_flows_.end()) {
+                sbi_flows_.erase(it);
+            }
+            if (sbi_flows_.size() >= kMaxSbiFlows) {
+                ++stats_.sbi_flows_dropped_full;
+                return;
+            }
+            SbiFlow f;
+            f.client = src;
+            f.server = dst;
+            f.client_isn = pkt.tcp_seq;
+            it = sbi_flows_.emplace(key, std::move(f)).first;
+            ++stats_.sbi_flows_opened;
+        }
+    }
+    if (it == sbi_flows_.end()) {
+        if (!pkt.payload.empty()) {
+            ++stats_.sbi_midstream_segments;
+        }
+        return;
+    }
+    SbiFlow& f = it->second;
+    f.last_ns = ts_ns;
+    if (rst) {
+        sbi_flows_.erase(it);
+        ++stats_.sbi_flows_closed;
+        return;
+    }
+    const auto dir = src == f.client ? http2::Dir::kClientToServer : http2::Dir::kServerToClient;
+    auto& half = dir == http2::Dir::kClientToServer ? f.c2s : f.s2c;
+    tcp_buf_.clear();
+    const bool was_broken = half.state() == tcp::StreamState::kBroken;
+    half.feed(pkt.tcp_seq, pkt.tcp_flags, pkt.payload, tcp_buf_);
+    if (!was_broken && half.state() == tcp::StreamState::kBroken) {
+        ++stats_.sbi_tcp_gaps;
+        f.dead = true;
+    }
+    if (!f.dead && !tcp_buf_.empty()) {
+        h2_msgs_.clear();
+        f.h2.feed(dir, tcp_buf_, ts_ns, h2_msgs_);
+        for (const auto& m : h2_msgs_) {
+            on_sbi_message(f, m);
+        }
+        if (f.h2.broken()) {
+            ++stats_.sbi_http2_errors;
+            sbi_error_event(ts_ns, f, dir, f.h2.error());
+            f.dead = true;
+        }
+    }
+    const auto done = [](const tcp::HalfStream& h) {
+        return h.state() == tcp::StreamState::kClosed || h.state() == tcp::StreamState::kBroken;
+    };
+    if (done(f.c2s) && done(f.s2c)) {
+        sbi_flows_.erase(it);
+        ++stats_.sbi_flows_closed;
+    }
+}
+
+void Pipeline::sweep_sbi(std::uint64_t now_ns) {
+    constexpr std::uint64_t kEvery = 10'000'000'000ULL;
+    if (now_ns < last_sweep_ns_ + kEvery) {
+        return;
+    }
+    last_sweep_ns_ = now_ns;
+    for (auto it = sbi_flows_.begin(); it != sbi_flows_.end();) {
+        if (now_ns > it->second.last_ns && now_ns - it->second.last_ns > kSbiIdleNs) {
+            it = sbi_flows_.erase(it);
+            ++stats_.sbi_flows_expired;
+        } else {
+            ++it;
+        }
+    }
+}
+
+namespace {
+
+std::string_view schema_method(std::string_view m) {
+    static constexpr std::array<std::string_view, 5> kMethods{"GET", "POST", "PUT", "PATCH",
+                                                              "DELETE"};
+    for (const auto k : kMethods) {
+        if (k == m) {
+            return k;
+        }
+    }
+    return {};
+}
+
+std::string media_type(std::string_view ct) {
+    const auto semi = ct.find(';');
+    auto v = ct.substr(0, semi);
+    while (!v.empty() && v.back() == ' ') {
+        v.remove_suffix(1);
+    }
+    std::string out;
+    for (const char c : v.substr(0, 64)) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '+' || c == '.';
+        out += ok ? c : '_';
+    }
+    return out;
+}
+
+}  // namespace
+
+void Pipeline::on_sbi_message(const SbiFlow& f, const http2::Message& m) {
+    const bool request = m.dir == http2::Dir::kClientToServer;
+    if (request) {
+        ++stats_.sbi_requests;
+    } else {
+        ++stats_.sbi_responses;
+    }
+    Event ev;
+    ev.event_id = uuids_.next();
+    ev.ts_ns = m.ts_ns;
+    ev.interface = "SBI";
+    ev.protocol = "HTTP2";
+    const auto& from = request ? f.client : f.server;
+    const auto& to = request ? f.server : f.client;
+    ev.src = Endpoint{from.ip.to_string(), from.port, nf_map_.lookup(from.ip)};
+    ev.dst = Endpoint{to.ip.to_string(), to.port, nf_map_.lookup(to.ip)};
+    ev.direction = request ? "request" : "response";
+    ev.size_bytes = m.header_bytes + m.body_bytes;
+    ev.sequence = m.stream_id;
+
+    const auto target = sbi::parse_target(m.path);
+    SbiContext ctx;
+    ctx.method = schema_method(m.method);
+    ctx.path = target.path;
+    ctx.service = target.service;
+    ctx.content_type = media_type(m.content_type);
+    std::string name;
+    if (m.method.empty()) {
+        name = "Response";  // the request was not seen (stream opened before capture)
+    } else {
+        name = sbi::operation_name(m.method, target);
+    }
+    ev.message = name;
+    std::optional<std::string> cause;
+    if (!request) {
+        ctx.status = m.status;
+        ev.message_code = static_cast<std::uint16_t>(m.status);
+        if (m.status >= 400) {
+            cause = sbi::find_problem_cause(m.body);
+            if (cause) {
+                ev.cause = *cause;
+            }
+        }
+    }
+    ev.sbi = std::move(ctx);
+
+    // Identity: path first, then the request body, then this message's own body
+    // (e.g. a GenerateAuthData response carries the SUPI de-concealed from a SUCI).
+    auto imsi = target.imsi;
+    if (!imsi && !m.request_body.empty()) {
+        imsi = sbi::find_imsi(m.request_body);
+    }
+    if (!imsi) {
+        imsi = sbi::find_imsi(m.body);
+    }
+    ev.ue.supi_hash = pseudonym(imsi);
+    auto psi = sbi::find_pdu_session_id(request ? m.body : m.request_body);
+    if (!psi) {
+        psi = sbi::find_pdu_session_id(request ? m.request_body : m.body);
+    }
+    ev.ue.pdu_session_id = psi;
+    emit(ev);
+}
+
+void Pipeline::sbi_error_event(std::uint64_t ts_ns, const SbiFlow& f, http2::Dir dir,
+                               std::string_view why) {
+    Event ev;
+    ev.event_id = uuids_.next();
+    ev.ts_ns = ts_ns;
+    ev.interface = "SBI";
+    ev.protocol = "HTTP2";
+    const bool c2s = dir == http2::Dir::kClientToServer;
+    const auto& from = c2s ? f.client : f.server;
+    const auto& to = c2s ? f.server : f.client;
+    ev.src = Endpoint{from.ip.to_string(), from.port, nf_map_.lookup(from.ip)};
+    ev.dst = Endpoint{to.ip.to_string(), to.port, nf_map_.lookup(to.ip)};
+    ev.message = "Undecodable";
+    ev.decode_status = "malformed";
+    ev.cause = why.substr(0, 64);
+    emit(ev);
 }
 
 }  // namespace prahari

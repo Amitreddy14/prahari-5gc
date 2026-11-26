@@ -39,7 +39,7 @@ std::string_view to_string(SessionState s) noexcept {
 }
 
 SessionView SessionTable::view(const Session& s, bool known) {
-    return SessionView{s.cp_seid, s.up_seid, s.state, known};
+    return SessionView{s.cp_seid, s.up_seid, s.state, known, s.supi_hash};
 }
 
 void SessionTable::erase(std::uint64_t id) {
@@ -79,7 +79,8 @@ SessionView SessionTable::apply(const SessionMessage& m) {
 
     if (m.type == static_cast<std::uint8_t>(MessageType::kSessionEstablishmentRequest)) {
         if (!m.f_seid) {
-            return SessionView{std::nullopt, std::nullopt, SessionState::kUnknown, false};
+            return SessionView{std::nullopt, std::nullopt, SessionState::kUnknown, false,
+                               std::nullopt};
         }
         const Key key{m.src, *m.f_seid};
         if (const auto it = by_cp_.find(key); it != by_cp_.end()) {
@@ -87,7 +88,7 @@ SessionView SessionTable::apply(const SessionMessage& m) {
         }
         if (sessions_.size() >= max_sessions_) {
             ++dropped_full_;
-            return SessionView{m.f_seid, std::nullopt, SessionState::kUnknown, false};
+            return SessionView{m.f_seid, std::nullopt, SessionState::kUnknown, false, std::nullopt};
         }
         const auto id = next_id_++;
         Session s;
@@ -95,6 +96,7 @@ SessionView SessionTable::apply(const SessionMessage& m) {
         s.up_ip = m.dst;
         s.cp_seid = *m.f_seid;
         s.created_ns = m.ts_ns;
+        s.supi_hash = m.supi_hash;
         sessions_.emplace(id, s);
         by_cp_.emplace(key, id);
         return view(s, true);

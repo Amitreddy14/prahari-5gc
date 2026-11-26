@@ -205,11 +205,13 @@ Result<bool> decode_tcp(std::span<const std::uint8_t> data, Packet& out) {
     ByteReader r{data};
     const auto sport = r.u16();
     const auto dport = r.u16();
-    if (!sport || !dport || !r.skip(8)) {
+    const auto seq = r.u32();
+    if (!sport || !dport || !seq || !r.skip(4)) {
         return DecodeError::kTruncated;
     }
     const auto offset_byte = r.u8();
-    if (!offset_byte) {
+    const auto flags = r.u8();
+    if (!offset_byte || !flags) {
         return DecodeError::kTruncated;
     }
     const std::size_t header_len = std::size_t{static_cast<std::uint8_t>(*offset_byte >> 4U)} * 4;
@@ -222,6 +224,8 @@ Result<bool> decode_tcp(std::span<const std::uint8_t> data, Packet& out) {
     out.transport = Transport::kTcp;
     out.src_port = *sport;
     out.dst_port = *dport;
+    out.tcp_seq = *seq;
+    out.tcp_flags = *flags;
     out.payload = data.subspan(header_len);
     return true;
 }

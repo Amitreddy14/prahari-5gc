@@ -56,8 +56,9 @@ struct FSeid {
     std::optional<net::IpAddress> ipv6;
 };
 
-// What the probe needs from a PFCP message body. Never holds subscriber identity:
-// the User ID IE is only flagged as present, its contents are not copied.
+// What the probe needs from a PFCP message body. Never holds a copy of subscriber
+// identity: `user_id` is a view into the message, valid only while it is, and is
+// meant for user_id_imsi() -> SupiHasher, never for output.
 struct Summary {
     std::size_t ie_count{};  // top-level IEs
     std::optional<std::string> node_id;
@@ -68,11 +69,15 @@ struct Summary {
     std::vector<std::uint16_t> pdr_ids;
     std::vector<std::uint32_t> far_ids;
     bool has_user_id{};
+    std::span<const std::uint8_t> user_id;  // User ID IE value (TS 29.244 8.2.101)
     bool has_vendor_ie{};
 };
 
 // Walks top-level and grouped IEs (bounded depth). Fails on any malformed IE.
 [[nodiscard]] Result<Summary> summarize(std::span<const std::uint8_t> body);
+
+// IMSI digits from a User ID IE value, if its IMSIF flag is set (TBCD, 0xF filler).
+[[nodiscard]] std::optional<std::string> user_id_imsi(std::span<const std::uint8_t> value);
 
 [[nodiscard]] std::string_view cause_name(std::uint8_t cause) noexcept;
 [[nodiscard]] constexpr bool cause_accepted(std::uint8_t cause) noexcept {

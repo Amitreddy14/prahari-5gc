@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(prahari_probe
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "Passive 5G core signalling probe"
     LANGUAGES CXX)
 
@@ -22,6 +22,9 @@ configure_file(include/prahari/version.hpp.in
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PCAP REQUIRED IMPORTED_TARGET libpcap)
+pkg_check_modules(NGHTTP2 REQUIRED IMPORTED_TARGET libnghttp2)
+pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka)
+find_package(Threads REQUIRED)
 find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 
 # Core library: every decoder lives here so tests and the CLI share one build.
@@ -38,11 +41,17 @@ add_library(prahari_core
     src/ngap.cpp
     src/nas.cpp
     src/supi.cpp
-    src/ue_table.cpp)
+    src/ue_table.cpp
+    src/tcp_stream.cpp
+    src/http2.cpp
+    src/sbi.cpp
+    src/kafka_sink.cpp
+    src/metrics.cpp)
 target_include_directories(prahari_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
-target_link_libraries(prahari_core PUBLIC PkgConfig::PCAP OpenSSL::Crypto)
+target_link_libraries(prahari_core PUBLIC PkgConfig::PCAP PkgConfig::NGHTTP2 PkgConfig::RDKAFKA
+                      OpenSSL::Crypto Threads::Threads)
 prahari_set_warnings(prahari_core)
 
 add_executable(prahari-probe src/main.cpp)
@@ -68,7 +77,11 @@ if(PRAHARI_BUILD_TESTS)
         tests/test_event.cpp
         tests/test_pipeline_capture.cpp
         tests/test_ngap.cpp
-        tests/test_nas.cpp)
+        tests/test_nas.cpp
+        tests/test_tcp_stream.cpp
+        tests/test_http2.cpp
+        tests/test_sbi.cpp
+        tests/test_kafka_metrics.cpp)
     target_compile_definitions(prahari_tests PRIVATE
         PRAHARI_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(prahari_tests PRIVATE prahari_core GTest::gtest GTest::gtest_main)
@@ -102,7 +115,7 @@ if(PRAHARI_FUZZ)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "PRAHARI_FUZZ requires Clang")
     endif()
-    foreach(f fuzz_pfcp fuzz_pfcp_ie fuzz_frame fuzz_ngap fuzz_nas)
+    foreach(f fuzz_pfcp fuzz_pfcp_ie fuzz_frame fuzz_ngap fuzz_nas fuzz_http2 fuzz_sbi fuzz_sbi_flow)
         add_executable(${f} fuzz/${f}.cpp)
         target_link_libraries(${f} PRIVATE prahari_core)
         target_compile_options(${f} PRIVATE -fsanitize=fuzzer)

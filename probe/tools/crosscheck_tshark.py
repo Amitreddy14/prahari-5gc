@@ -11,13 +11,20 @@ tshark is the oracle.
       AMF-UE-NGAP-IDs (the probe back-fills AMF IDs from its UE table, so counts differ
       by design but values must not), the decoded NAS 5GMM/5GSM message types, and the
       Global gNB ID + PLMN on NG Setup.
-  Privacy: no MSIN from any SUCI in the capture may appear anywhere in the output.
+  SBI (HTTP/2), as multisets per connection side: every request's (stream, method,
+      path with identities replaced the way the probe documents) and every final
+      response's (stream, status). For each request whose raw path holds a SUPI, the
+      event's supi_hash must equal HMAC-SHA256(key, SUPI) computed here.
+  Privacy: no MSIN from any SUCI and no IMSI from any SBI path in the capture may
+      appear anywhere in the output.
 Exits non-zero on any mismatch.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -53,6 +60,125 @@ UP_HEADER = {52, 54, 57}  # PFCP header SEID is the UPF's (UP) SEID
 PDU_TYPE = {"initiating": 0, "successful": 1, "unsuccessful": 2}
 
 Event = dict[str, Any]
+
+KEY = "crosscheck-key-not-secret-0123"
+US = "\x1f"  # aggregator for SBI fields: paths may contain commas
+
+
+def sanitize_path(raw: str) -> str:
+    """The probe's documented rule: drop the query, replace identity segments."""
+    out = []
+    for seg in raw.split("?")[0].split("#")[0].split("/"):
+        if seg.startswith("imsi-"):
+            seg = "{supi}"
+        elif seg.startswith("suci-"):
+            seg = "{suci}"
+        elif seg.startswith(("msisdn-", "extid-", "gpsi-")):
+            seg = "{gpsi}"
+        elif seg.startswith("nai-"):
+            seg = "{nai}"
+        out.append(seg)
+    return "/".join(out)
+
+
+def supi_hash(supi: str) -> str:
+    return hmac.new(KEY.encode(), supi.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def check_sbi(
+    pcap: str, events: list[Event], out: str, bad: list[str]
+) -> tuple[int, int]:
+    fields = [
+        "ip.src",
+        "tcp.srcport",
+        "http2.streamid",
+        "http2.type",
+        "http2.headers.method",
+        "http2.headers.path",
+        "http2.headers.status",
+    ]
+    cmd = [
+        "tshark",
+        "-r",
+        pcap,
+        "-d",
+        "tcp.port==7777,http2",
+        "-Y",
+        "http2.type==1",
+        "-T",
+        "fields",
+        "-E",
+        "separator=\t",
+        "-E",
+        "occurrence=a",
+        "-E",
+        f"aggregator={US}",
+    ]
+    for f in fields:
+        cmd += ["-e", f]
+    rows = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+    t_req: Counter[tuple[str, ...]] = Counter()
+    t_res: Counter[tuple[str, ...]] = Counter()
+    want_hash: dict[tuple[str, ...], str] = {}
+    imsis: set[str] = set()
+    for line in rows.splitlines():
+        src, port, sids, types, methods, paths, statuses = (
+            line.split("\t") + [""] * 7
+        )[:7]
+        frame_sids = sids.split(US)
+        header_sids = [
+            s for s, t in zip(frame_sids, types.split(US), strict=False) if t == "1"
+        ]
+        ms = [m for m in methods.split(US) if m]
+        ps = [p for p in paths.split(US) if p]
+        ss = [x for x in statuses.split(US) if x]
+        if ms:
+            for sid, m, raw in zip(header_sids, ms, ps, strict=False):
+                key = (src, port, sid, m, sanitize_path(raw))
+                t_req[key] += 1
+                for seg in raw.split("?")[0].split("/"):
+                    if seg.startswith("imsi-") and seg[5:].isdigit():
+                        imsis.add(seg[5:])
+                        want_hash[(src, port, sid)] = supi_hash(seg)
+        else:
+            for sid, st in zip(header_sids, ss, strict=False):
+                if not st.startswith("1"):
+                    t_res[(src, port, sid, st)] += 1
+    sbi = [e for e in events if e["interface"] == "SBI" and e["decode_status"] == "ok"]
+    p_req: Counter[tuple[str, ...]] = Counter()
+    p_res: Counter[tuple[str, ...]] = Counter()
+    for e in sbi:
+        b = e["sbi"]
+        base = (e["src"]["ip"], str(e["src"]["port"]), str(e["sequence"]))
+        if e["direction"] == "request":
+            p_req[(*base, b.get("method", ""), b["path"])] += 1
+            want = want_hash.get(base)
+            got = e.get("ue", {}).get("supi_hash")
+            if want and got != want:
+                bad.append(f"SBI supi_hash {base}: expected {want}, got {got}")
+        else:
+            p_res[(*base, str(b["status"]))] += 1
+    for name, t, p in (("request", t_req, p_req), ("response", t_res, p_res)):
+        missing, extra = t - p, p - t
+        if missing or extra:
+            bad.append(
+                f"SBI {name}s: {sum(missing.values())} only in tshark "
+                f"(e.g. {next(iter(missing), None)}), {sum(extra.values())} only in "
+                f"probe (e.g. {next(iter(extra), None)})"
+            )
+    errors = [
+        e for e in events if e["interface"] == "SBI" and e["decode_status"] != "ok"
+    ]
+    if errors:
+        bad.append(
+            f"SBI: {len(errors)} undecodable connection(s): {errors[0].get('cause')}"
+        )
+    leaks = [i for i in imsis if i in out or i[5:] in out]
+    if leaks:
+        bad.append(
+            f"PRIVACY: {len(leaks)} IMSI(s) from SBI paths found in probe output"
+        )
+    return sum(t_req.values()), sum(t_res.values())
 
 
 def tshark(
@@ -207,7 +333,7 @@ def check_ngap_frame(
 
 
 def check_capture(probe: str, pcap: str) -> list[str]:
-    env = dict(os.environ, PRAHARI_SUPI_KEY="crosscheck-key-not-secret-0123")
+    env = dict(os.environ, PRAHARI_SUPI_KEY=KEY)
     out = subprocess.run(
         [
             probe,
@@ -217,7 +343,7 @@ def check_capture(probe: str, pcap: str) -> list[str]:
             "--seed",
             "1",
             "--filter",
-            "udp port 8805 or sctp",
+            "udp port 8805 or sctp or tcp port 7777",
         ],
         check=True,
         capture_output=True,
@@ -244,6 +370,8 @@ def check_capture(probe: str, pcap: str) -> list[str]:
         for row, group in zip(ngap_rows, groups, strict=True):
             check_ngap_frame(row, group, bad)
 
+    sbi_req, sbi_res = check_sbi(pcap, events, out, bad)
+
     msins = {m for row in ngap_rows for m in row["nas_5gs.mm.suci.msin"]}
     leaks = [m for m in msins if m in out]
     if leaks:
@@ -253,9 +381,9 @@ def check_capture(probe: str, pcap: str) -> list[str]:
         print("MISMATCH", m)
     status = "PASS" if not bad else "FAIL"
     print(
-        f"{status} {pcap}: {len(n4)} PFCP + {n2_count} NGAP messages compared "
-        f"({len(ngap_rows)} N2 frames), {len(msins)} SUCI MSINs checked for leaks, "
-        f"{len(bad)} mismatches"
+        f"{status} {pcap}: {len(n4)} PFCP + {n2_count} NGAP + {sbi_req}/{sbi_res} SBI "
+        f"request/response messages compared ({len(ngap_rows)} N2 frames), "
+        f"{len(msins)} SUCI MSINs checked for leaks, {len(bad)} mismatches"
     )
     return bad
 

@@ -56,6 +56,14 @@ struct NasContext {
     std::optional<std::uint8_t> mm_cause;
 };
 
+struct SbiContext {
+    std::string_view method;  // empty = omit (only the schema's methods are emitted)
+    std::string path;         // sanitised by sbi::parse_target
+    std::optional<int> status;
+    std::string service;       // empty = omit
+    std::string content_type;  // empty = omit; media type only, parameters dropped
+};
+
 struct UeIds {
     std::optional<std::uint32_t> ran_ue_ngap_id;
     std::optional<std::uint64_t> amf_ue_ngap_id;
@@ -85,6 +93,7 @@ struct Event {
     std::optional<PfcpContext> pfcp;
     std::optional<NgapContext> ngap;
     std::optional<NasContext> nas;
+    std::optional<SbiContext> sbi;
 };
 
 // Appends one JSON object (no trailing newline) to `out`.

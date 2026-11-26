@@ -6,9 +6,9 @@ core's control plane (NGAP, NAS-5GS, PFCP, HTTP/2 SBI), and an analytics layer
 that detects attacks, measures its own robustness, and explains each alert in
 terms of the 3GPP procedure being abused.
 
-> Status: **Phase 3a (probe: NGAP + NAS-5GS on N2, PFCP on N4)**. See [`task.md`](task.md) for the
-> roadmap, and [`docs/results/probe-phase3a.md`](docs/results/probe-phase3a.md) and
-> [`probe-phase2.md`](docs/results/probe-phase2.md) for measured results.
+> Status: **Phase 3b (probe complete: N2, N4 and SBI decoded, one pseudonym per UE across
+> all three, events on Kafka, Prometheus metrics)**. See [`task.md`](task.md) for the roadmap and
+> [`docs/results/`](docs/results) for measured results per phase.
 > Results tables will appear here only when a committed script produces them.
 
 ```mermaid
@@ -57,7 +57,7 @@ Requirements: Docker Desktop (WSL2 backend) and VS Code with the Dev Containers 
    ```bash
    cd testbed && cp .env.example .env && docker compose up -d --build && bash scripts/smoke.sh
    ```
-5. **Watch the probe decode live N2 and N4 traffic** from the running testbed:
+5. **Watch the probe decode live N2, N4 and SBI traffic** from the running testbed:
    ```bash
    tail -f testbed/events/events.jsonl
    ```
@@ -74,9 +74,11 @@ Requirements: Docker Desktop (WSL2 backend) and VS Code with the Dev Containers 
 |---|---|
 | PFCP decoding vs tshark (1,342 real messages) | 0 mismatches |
 | NGAP + NAS decoding vs tshark (2,682 real messages) | 0 mismatches |
-| IMSIs leaked into probe output (110 UEs' SUCIs checked) | 0 |
-| Probe throughput, one core, JSON included | ~650k PFCP msgs/s (2.3 GHz); ~450–520k N2/N4 msgs/s (2.1 GHz) |
-| Fuzzing (5 targets, ~70M inputs) | 0 crashes |
+| SBI (HTTP/2) decoding vs tshark (5,742 real messages) | 0 mismatches |
+| IMSIs leaked into probe output (N2 SUCIs, SBI paths and bodies) | 0 |
+| UEs traceable across N2, N4 and SBI by one pseudonym | 10 / 10 |
+| Probe throughput, one 2.1 GHz core, JSON included | ~489k N2, ~371k N4, ~203k SBI msgs/s |
+| Fuzzing (8 targets, ~80M inputs) | 0 crashes |
 | Testbed footprint at 100 UEs | ~425 MB RAM |
 
 ## Engineering standards

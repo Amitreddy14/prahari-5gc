@@ -17,8 +17,11 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
+#include "prahari/kafka_sink.hpp"
+#include "prahari/metrics.hpp"
 #include "prahari/pcap_source.hpp"
 #include "prahari/pfcp.hpp"
 #include "prahari/pipeline.hpp"
@@ -28,11 +31,12 @@
 namespace {
 
 constexpr int kExitOk = 0;
-constexpr int kExitUsage = 64;                                        // EX_USAGE
-constexpr int kExitDataErr = 65;                                      // EX_DATAERR
-constexpr int kExitNoInput = 66;                                      // EX_NOINPUT
-constexpr int kExitIoErr = 74;                                        // EX_IOERR
-constexpr std::string_view kDefaultFilter = "udp port 8805 or sctp";  // N4 + N2
+constexpr int kExitUsage = 64;    // EX_USAGE
+constexpr int kExitDataErr = 65;  // EX_DATAERR
+constexpr int kExitNoInput = 66;  // EX_NOINPUT
+constexpr int kExitIoErr = 74;    // EX_IOERR
+constexpr std::string_view kDefaultFilter =
+    "udp port 8805 or sctp or tcp port 7777";  // N4 + N2 + SBI
 
 // The signal handler needs the active source to break the capture loop; a global
 // atomic pointer is the only async-signal-safe channel for that.
@@ -47,7 +51,7 @@ extern "C" void on_signal(int /*sig*/) {
 
 void print_usage(std::ostream& out) {
     out << "prahari-probe " << prahari::kVersion << "\n"
-        << "Passive 5G core signalling probe: PFCP (N4), NGAP + NAS (N2).\n\n"
+        << "Passive 5G core signalling probe: PFCP (N4), NGAP + NAS (N2), HTTP/2 SBI.\n\n"
         << "Usage:\n"
         << "  prahari-probe run (--iface IF | --pcap FILE) [options]\n"
         << "      --filter BPF     capture filter (default: \"" << kDefaultFilter << "\")\n"
@@ -57,6 +61,11 @@ void print_usage(std::ostream& out) {
         << "      --seed N         deterministic event IDs (tests, reproducible datasets)\n"
         << "      --supi-key-env V environment variable holding the SUPI HMAC key\n"
         << "                       (default PRAHARI_SUPI_KEY; unset = SUPIs omitted)\n"
+        << "      --sbi-ports LIST cleartext SBI (h2c) TCP ports, comma-separated (default 7777)\n"
+        << "      --kafka-brokers B  also produce events to Kafka (bootstrap servers);\n"
+        << "                       without --out, Kafka is the only output\n"
+        << "      --kafka-topic T  Kafka topic (default prahari.events.v1)\n"
+        << "      --metrics-listen HOST:PORT  serve Prometheus metrics on /metrics\n"
         << "      --stats          print pipeline statistics as JSON to stderr at exit\n"
         << "  prahari-probe bench --pcap FILE [--repeat N]   decode throughput, no output\n"
         << "  prahari-probe decode-pfcp <hex>                decode one PFCP header\n"
@@ -70,6 +79,10 @@ struct Options {
     std::string out;
     std::string nf_map;
     std::string supi_key_env{"PRAHARI_SUPI_KEY"};
+    std::string kafka_brokers;
+    std::string kafka_topic{"prahari.events.v1"};
+    std::string metrics_listen;
+    std::unordered_set<std::uint16_t> sbi_ports{prahari::net::kPortSbi};
     std::optional<std::uint64_t> seed;
     bool stats{};
     std::uint64_t repeat{200};
@@ -119,6 +132,28 @@ std::string parse_options(const std::vector<std::string_view>& args, Options& o)
             o.nf_map = *v;
         } else if (a == "--supi-key-env") {
             o.supi_key_env = *v;
+        } else if (a == "--kafka-brokers") {
+            o.kafka_brokers = *v;
+        } else if (a == "--kafka-topic") {
+            o.kafka_topic = *v;
+        } else if (a == "--metrics-listen") {
+            o.metrics_listen = *v;
+        } else if (a == "--sbi-ports") {
+            o.sbi_ports.clear();
+            std::string_view rest = *v;
+            while (!rest.empty()) {
+                const auto comma = rest.find(',');
+                const auto port = parse_u64(rest.substr(0, comma));
+                if (!port || *port == 0 || *port > 65535) {
+                    return "--sbi-ports needs comma-separated ports 1-65535";
+                }
+                o.sbi_ports.insert(static_cast<std::uint16_t>(*port));
+                rest =
+                    comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+            }
+            if (o.sbi_ports.empty()) {
+                return "--sbi-ports needs at least one port";
+            }
         } else if (a == "--seed") {
             o.seed = parse_u64(*v);
             if (!o.seed) {
@@ -162,6 +197,10 @@ int cmd_run(const Options& o) {
         return kExitDataErr;
     }
 
+    // Outputs: JSONL (stdout or --out) unless Kafka alone was asked for; Kafka if
+    // brokers are given; both through a tee.
+    const bool want_kafka = !o.kafka_brokers.empty();
+    const bool want_stream = !want_kafka || !o.out.empty();
     std::FILE* out = stdout;
     std::unique_ptr<std::FILE, int (*)(std::FILE*)> owned{nullptr, &std::fclose};
     if (!o.out.empty() && o.out != "-") {
@@ -172,13 +211,59 @@ int cmd_run(const Options& o) {
         }
         out = owned.get();
     }
-    prahari::StreamSink sink{out};
+    std::unique_ptr<prahari::StreamSink> stream_sink;
+    if (want_stream) {
+        stream_sink = std::make_unique<prahari::StreamSink>(out);
+    }
+    std::unique_ptr<prahari::KafkaSink> kafka;
+    if (want_kafka) {
+        std::string err;
+        prahari::KafkaConfig kc;
+        kc.brokers = o.kafka_brokers;
+        kc.topic = o.kafka_topic;
+        kafka = prahari::KafkaSink::create(kc, err);
+        if (!kafka) {
+            std::cerr << "error: Kafka: " << err << "\n";
+            return kExitUsage;
+        }
+        std::cerr << "prahari-probe: producing to Kafka " << o.kafka_brokers << " topic "
+                  << o.kafka_topic << "\n";
+    }
+    std::unique_ptr<prahari::TeeSink> tee;
+    prahari::Sink* sink = nullptr;
+    if (stream_sink && kafka) {
+        tee = std::make_unique<prahari::TeeSink>(*stream_sink, *kafka);
+        sink = tee.get();
+    } else if (kafka) {
+        sink = kafka.get();
+    } else {
+        sink = stream_sink.get();
+    }
     std::optional<prahari::Pipeline> pipeline;
     if (o.seed) {
-        pipeline.emplace(std::move(nf_map), sink, *o.seed);
+        pipeline.emplace(std::move(nf_map), *sink, *o.seed);
     } else {
-        pipeline.emplace(std::move(nf_map), sink);
+        pipeline.emplace(std::move(nf_map), *sink);
     }
+    pipeline->set_sbi_ports(o.sbi_ports);
+
+    std::unique_ptr<prahari::MetricsServer> metrics;
+    if (!o.metrics_listen.empty()) {
+        std::string err;
+        metrics = prahari::MetricsServer::start(o.metrics_listen, err);
+        if (!metrics) {
+            std::cerr << "error: metrics: " << err << "\n";
+            return kExitUsage;
+        }
+        std::cerr << "prahari-probe: metrics on http://" << o.metrics_listen << "/metrics\n";
+    }
+    const auto publish_metrics = [&] {
+        if (metrics) {
+            metrics->publish(prahari::render_metrics(pipeline->stats(), pipeline->sessions(),
+                                                     pipeline->ues(), pipeline->sbi_flows(),
+                                                     kafka ? &kafka->stats() : nullptr));
+        }
+    };
 
     {
         std::string err;
@@ -200,8 +285,11 @@ int cmd_run(const Options& o) {
     // Live mode: hand complete lines to the file at least this often, so consumers
     // tailing events.jsonl stay current even under constant traffic.
     constexpr auto kLiveFlushEvery = std::chrono::milliseconds{200};
+    constexpr auto kMetricsEvery = std::chrono::seconds{1};
     const bool live = !o.iface.empty();
     auto last_flush = std::chrono::steady_clock::now();
+    auto last_metrics = last_flush;
+    publish_metrics();
     int rc = kExitOk;
     prahari::Frame f;
     for (;;) {
@@ -211,15 +299,21 @@ int cmd_run(const Options& o) {
             if (live) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now - last_flush >= kLiveFlushEvery) {
-                    sink.flush();
+                    sink->flush();
                     last_flush = now;
+                }
+                if (now - last_metrics >= kMetricsEvery) {
+                    publish_metrics();
+                    last_metrics = now;
                 }
             }
             continue;
         }
         if (n == prahari::PcapSource::Next::kTimeout) {
-            sink.flush();  // idle: keep the output file current
+            sink->flush();  // idle: keep the output file current
+            publish_metrics();
             last_flush = std::chrono::steady_clock::now();
+            last_metrics = last_flush;
             continue;
         }
         if (n == prahari::PcapSource::Next::kError) {
@@ -229,10 +323,21 @@ int cmd_run(const Options& o) {
         break;
     }
     g_source.store(nullptr);
-    sink.flush();
+    sink->flush();
+    publish_metrics();
+    if (kafka && !kafka->drain(10'000)) {
+        std::cerr << "prahari-probe: warning: Kafka did not acknowledge every event in 10 s\n";
+    }
     if (o.stats) {
-        std::cerr << prahari::stats_json(pipeline->stats(), pipeline->sessions(), pipeline->ues())
+        std::cerr << prahari::stats_json(pipeline->stats(), pipeline->sessions(), pipeline->ues(),
+                                         pipeline->sbi_flows())
                   << "\n";
+        if (kafka) {
+            const auto& k = kafka->stats();
+            std::cerr << "{\"kafka_produced\":" << k.produced
+                      << ",\"kafka_delivered\":" << k.delivered << ",\"kafka_failed\":" << k.failed
+                      << ",\"kafka_dropped\":" << k.dropped << "}\n";
+        }
     }
     return rc;
 }
@@ -266,6 +371,9 @@ int cmd_bench(const Options& o) {
     pipeline.set_supi_hasher(prahari::SupiHasher{"bench-key-not-secret-0123456789"});
     const auto start = std::chrono::steady_clock::now();
     for (std::uint64_t r = 0; r < o.repeat; ++r) {
+        // Replaying the same TCP sequence numbers would look like retransmissions:
+        // forget SBI connections so each pass is decoded as new traffic.
+        pipeline.reset_sbi_flows();
         for (const auto& fr : frames) {
             pipeline.on_frame(fr.ts, src.link(), fr.bytes);
         }
@@ -273,14 +381,15 @@ int cmd_bench(const Options& o) {
     const auto secs =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     const auto& s = pipeline.stats();
-    const auto all = static_cast<double>(s.pfcp_messages + s.ngap_messages);
-    // Every rate is per signalling message (PFCP + NGAP), so it stays finite and
-    // comparable whichever interfaces the capture carries.
+    const auto sbi = s.sbi_requests + s.sbi_responses;
+    const auto all = static_cast<double>(s.pfcp_messages + s.ngap_messages + sbi);
+    // Every rate is per signalling message (PFCP + NGAP + SBI request/response), so it
+    // stays finite and comparable whichever interfaces the capture carries.
     const auto ns_per_msg = all > 0 ? secs * 1e9 / all : 0.0;
     std::cout << "{\"frames\":" << s.frames << ",\"pfcp_messages\":" << s.pfcp_messages
-              << ",\"ngap_messages\":" << s.ngap_messages << ",\"events\":" << s.events
-              << ",\"json_bytes\":" << sink.bytes() << ",\"seconds\":" << secs
-              << ",\"signalling_msgs_per_sec\":" << (all / secs)
+              << ",\"ngap_messages\":" << s.ngap_messages << ",\"sbi_messages\":" << sbi
+              << ",\"events\":" << s.events << ",\"json_bytes\":" << sink.bytes()
+              << ",\"seconds\":" << secs << ",\"signalling_msgs_per_sec\":" << (all / secs)
               << ",\"ns_per_signalling_msg\":" << ns_per_msg
               << ",\"frames_per_sec\":" << (static_cast<double>(s.frames) / secs) << "}\n";
     return kExitOk;

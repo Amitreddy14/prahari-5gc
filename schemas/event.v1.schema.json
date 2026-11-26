@@ -149,7 +149,7 @@
         "path": {
           "type": "string",
           "maxLength": 256,
-          "description": "Path only; query strings are stripped"
+          "description": "Path only: query strings are stripped and identity segments replaced by {supi}, {suci}, {gpsi} or {nai}"
         },
         "status": {
           "type": "integer",
@@ -160,8 +160,14 @@
           "type": "string",
           "maxLength": 32,
           "description": "e.g. nnrf-disc, namf-comm, nsmf-pdusession"
+        },
+        "content_type": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Media type without parameters, e.g. application/json, multipart/related"
         }
-      }
+      },
+      "description": "SBI (HTTP/2) request or response. One event per completed message; `sequence` holds the HTTP/2 stream ID, `message` the 3GPP service operation (e.g. NFDiscover, CreateSMContext), `message_code` the status for responses."
     },
     "pfcp": {
       "type": "object",

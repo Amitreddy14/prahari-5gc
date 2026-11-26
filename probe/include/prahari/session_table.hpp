@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -33,6 +34,8 @@ struct SessionView {
     // False when a message refers to a session the probe never saw being created.
     // For a probe started mid-stream that is expected; for a fresh network it is a signal.
     bool known{};
+    // SUPI pseudonym recorded at establishment (from the User ID IE), if any.
+    std::optional<std::string> supi_hash;
 };
 
 struct SessionMessage {
@@ -43,6 +46,7 @@ struct SessionMessage {
     std::optional<std::uint64_t> f_seid;  // from the F-SEID IE, if present
     std::optional<std::uint8_t> cause;
     std::uint64_t ts_ns{};
+    std::optional<std::string> supi_hash;  // Establishment Request only
 };
 
 class SessionTable {
@@ -77,6 +81,7 @@ private:
         std::optional<std::uint64_t> up_seid;
         SessionState state{SessionState::kEstablishing};
         std::uint64_t created_ns{};
+        std::optional<std::string> supi_hash;
     };
 
     [[nodiscard]] static SessionView view(const Session& s, bool known);
