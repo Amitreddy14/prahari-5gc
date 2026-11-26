@@ -6,11 +6,11 @@ core's control plane (NGAP, NAS-5GS, PFCP, HTTP/2 SBI), and an analytics layer
 that detects attacks, measures its own robustness, and explains each alert in
 terms of the 3GPP procedure being abused.
 
-> Status: **Phase 4b (12 attacks across N4, SBI and N2; benign traffic + campaign runner;
-> labelled Parquet dataset)**. The probe (N2, N4, SBI, Kafka, metrics) is complete, and the
-> injector now covers NGAP over SCTP. See [`task.md`](task.md) for the roadmap and
-> [`docs/results/`](docs/results) for measured results. Results tables appear here only
-> when a committed script produces them.
+> Status: **Phase 5a (detection: identity-free behavioural rules + evaluation harness —
+> 8/9 attacks detected at 100% precision on the labelled dataset)**. The probe, the
+> 12-attack injector (N4/SBI/N2), and the labelled-dataset pipeline are complete. See
+> [`task.md`](task.md) for the roadmap and [`docs/results/`](docs/results) for measured
+> results. Results tables appear here only when a committed script produces them.
 
 ```mermaid
 flowchart LR
@@ -35,7 +35,7 @@ with the NRF. Prahari watches those interfaces and catches it. Full reasoning in
 | Path | What |
 |---|---|
 | [`probe/`](probe) | C++20 passive probe: bounds-checked decoders, GoogleTest, libFuzzer |
-| [`analytics/`](analytics) | Python: event contract, labeller, dataset build (`prahari-dataset`), detectors |
+| [`analytics/`](analytics) | Python: event contract, labeller, dataset build (`prahari-dataset`), detection (`prahari-detect`) |
 | [`schemas/`](schemas) | Event contract v1 (JSON Schema) + examples |
 | [`docs/adr/`](docs/adr) | Architecture decision records |
 | [`testbed/`](testbed) | Open5GS v2.7.7 + UERANSIM v3.2.8 in Compose, capture sidecar, smoke/attack/dataset scripts |
@@ -86,6 +86,7 @@ Requirements: Docker Desktop (WSL2 backend) and VS Code with the Dev Containers 
 | Spoofed attack messages attributed exactly by the labeller | 102,302 / 102,302 |
 | N2 (NGAP/NAS) encoders vs real testbed PDUs (pycrate round-trip) | byte-identical; every generated PDU decodes in the C++ probe |
 | Labelled dataset pipeline (events → typed Parquet + card) | 40 columns, schema-validated, class balance in the card |
+| Rules detector on the labelled dataset (identity-free, behavioural) | 8/9 attacks detected, precision 1.000, 0% held-out false positives |
 | Testbed footprint at 100 UEs | ~425 MB RAM |
 
 ## Engineering standards
