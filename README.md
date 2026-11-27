@@ -6,11 +6,12 @@ core's control plane (NGAP, NAS-5GS, PFCP, HTTP/2 SBI), and an analytics layer
 that detects attacks, measures its own robustness, and explains each alert in
 terms of the 3GPP procedure being abused.
 
-> Status: **Phase 5a (detection: identity-free behavioural rules + evaluation harness —
-> 8/9 attacks detected at 100% precision on the labelled dataset)**. The probe, the
-> 12-attack injector (N4/SBI/N2), and the labelled-dataset pipeline are complete. See
-> [`task.md`](task.md) for the roadmap and [`docs/results/`](docs/results) for measured
-> results. Results tables appear here only when a committed script produces them.
+> Status: **Phase 5b (layered detection: rules + Isolation Forest + sequence model, fused
+> into an ensemble — 9/9 attacks detected on the labelled dataset, with a streaming
+> scorer)**. The probe, the 12-attack injector (N4/SBI/N2), and the labelled-dataset
+> pipeline are complete. See [`task.md`](task.md) for the roadmap and
+> [`docs/results/`](docs/results) for measured results (with their caveats). Results tables
+> appear here only when a committed script produces them.
 
 ```mermaid
 flowchart LR
@@ -87,6 +88,7 @@ Requirements: Docker Desktop (WSL2 backend) and VS Code with the Dev Containers 
 | N2 (NGAP/NAS) encoders vs real testbed PDUs (pycrate round-trip) | byte-identical; every generated PDU decodes in the C++ probe |
 | Labelled dataset pipeline (events → typed Parquet + card) | 40 columns, schema-validated, class balance in the card |
 | Rules detector on the labelled dataset (identity-free, behavioural) | 8/9 attacks detected, precision 1.000, 0% held-out false positives |
+| Ensemble detector (rules + Isolation Forest + sequence model) | 9/9 attacks detected, F1 0.96 (single campaign; see results caveats) |
 | Testbed footprint at 100 UEs | ~425 MB RAM |
 
 ## Engineering standards

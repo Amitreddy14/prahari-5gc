@@ -14,7 +14,7 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 | 4a | Attacks I: injector, N4 + SBI, labels | Allowlisted injector, 8 N4/SBI scenarios validated on real Open5GS, run manifests, exact labeller, attacker container | ✅ |
 | 4b | Attacks II: N2 + dataset | Rogue gNB, registration storm, forged release, malformed NGAP; benign generator; campaign runner; labelled runs → Parquet + dataset card | 🔄 (awaiting your run + merge) |
 | 5a | Detection I: rules + harness | Identity-free behavioural rules, evaluation harness, measured results (8/9 attacks, P=1.00, 0% FP) | 🔄 (awaiting your merge) |
-| 5b | Detection II: ML layers | Isolation Forest + sequence model on the same harness; streaming scorer; cross-campaign splits | ⬜ |
+| 5b | Detection II: ML layers | Isolation Forest + sequence model + ensemble (9/9, F1 0.96); streaming scorer; cross-campaign-ready harness | 🔄 (awaiting your merge) |
 | 6 | Adversarial robustness | Adaptive evasion attacks, measured degradation, hardening, paper-ready results | ⬜ |
 | 7 | LLM triage | Local-LLM agent, 3GPP notes KB, schema-validated output, faithfulness eval | ⬜ |
 | 8 | SOC console | FastAPI (auth, rate limits) + React timeline, drill-down, session ladder; Grafana ops dashboard | ⬜ |
@@ -121,8 +121,12 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. Work one task at a time
 - ✅ 5a.4 Measured on `prahari-dataset-v1`: **8/9 attacks detected, precision 1.000, F1 0.644, 0% held-out FP**, ≤0.3 s latency; SBI-02 (rogue NF registration) is an honest behavioural blind spot (needs identity allowlisting). `docs/results/detection-phase5a.md`
 - ⬜ 5a.5 **You:** branch, commit, PR, CI green, merge, tag `phase-5a`
 
-## Phase 5b — Detection II: ML layers (next)
+## Phase 5b — Detection II: ML layers
 
-- ⬜ 5b.1 Isolation Forest on windowed behavioural features; same harness
-- ⬜ 5b.2 Sequence model (per-UE/per-session message sequences, LSTM or small transformer)
-- ⬜ 5b.3 Layer fusion + streaming scorer; cross-campaign train/test splits (needs 2–3 more campaigns, varied seeds)
+- ✅ 5b.1 Isolation Forest (`detect/isoforest.py`) on windowed behavioural features (`detect/windows.py`); drops zero-variance-in-benign features (they give the forest no isolation power); batched causal scoring
+- ✅ 5b.2 Sequence model (`detect/sequence.py`): per-interface benign message-transition (bigram) surprisal; novel message types flagged; names the improbable transition (Markov, not LSTM — honest on one campaign; ADR-0009 note)
+- ✅ 5b.3 Ensemble (`detect/ensemble.py`): rules + IF + sequence, OR-fused, per-alert layer tag — **9/9 attacks, F1 0.959, catches SBI-02 rules missed**
+- ✅ 5b.4 Streaming scorer (`detect/stream.py`, `prahari-detect-stream`): calibrate once, score a live JSONL/stdin stream, emit layer-tagged alerts
+- ✅ 5b.5 Harness: per-layer comparison + `evaluate_cross` (cross-campaign splits, ready for more campaigns); `docs/results/detection-phase5b.md` with honest analysis (sequence score optimistic due to benign-vocabulary narrowness)
+- ⬜ 5b.6 **You:** branch, commit, PR, CI green, merge, tag `phase-5b`
+- ⬜ 5b.7 (optional, strengthens 5b) generate 2–3 more campaigns (varied benign seeds) and run the cross-campaign evaluation for a generalization number

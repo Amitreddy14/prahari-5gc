@@ -2,6 +2,24 @@
 
 Newest first. Decisions, bugs, surprises and context that the code alone does not show.
 
+## 2026-11-27 — Phase 5b (detection: Isolation Forest + sequence + ensemble)
+
+**Decisions**
+- Two ML layers on the 5a harness, both identity-free: IF (`detect/isoforest.py`) over windowed behavioural features (`detect/windows.py`), and a Markov message-transition model (`detect/sequence.py`). Ensemble (`detect/ensemble.py`) OR-fuses rules+IF+sequence, each alert tagged by layer. Streaming scorer (`detect/stream.py`, `prahari-detect-stream`). Harness got `evaluate_cross` (cross-campaign) + `compare`.
+- Sequence model is **Markov (bigram), not LSTM** — honest/non-overfitting on one campaign; LSTM is the richer variant once several campaigns exist (documented).
+
+**Measured (`prahari-dataset-v1`)**: rules 8/9 F1 0.64 | IF 5/9 F1 0.51 | sequence 9/9 F1 0.96 | **ensemble 9/9 F1 0.959**, catches SBI-02 the rules missed.
+
+**Honesty caveat (important for the writeup)**: the sequence model's high score is **optimistic** — on this dataset attacks use message types benign never does (benign ~9 types, attacks +66), so "novel message type" alone separates most attacks; it's partly a vocabulary allowlist, reflecting the benign generator's narrowness, not general detectability. Same single-campaign limitation as 5a, amplified. Cross-campaign eval + richer benign is the real test (wired via `evaluate_cross`, needs 2-3 more campaigns).
+
+**Engineering findings (IF)**:
+- IsolationForest with low contamination **misses anomalies that spike on 1-2 features** (pure rate burst) — they average away across irrelevant dims; verified in minimal sklearn too. Sharp spikes are the rules' job; IF's niche is *distributed* anomalies (flood shifting rate+response+fanout+size together), which it did catch (N4-03, N2-01).
+- IF **can't isolate on features constant in benign** (it only splits within the training range) — e.g. unknown_session_ratio=0 in all benign gives zero power. Fix: drop zero-variance features before fitting. Those binary signals belong to rules.
+
+**Perf**: per-event IF scoring (sklearn decision_function per call) is too slow for a 12k batch — added `score_all` (build window vectors causally, one batched predict). eval uses `_verdicts`→score_all when present.
+
+**Infra**: analytics deps += numpy, scikit-learn (detect extra + dev). mypy python_version bumped 3.11→3.12 (numpy 2.x ships 3.12-syntax stubs; our code stays 3.11-compatible). Tests: 44 analytics (+5 ML, sklearn-dependent).
+
 ## 2026-11-27 — Phase 5a (detection: rules + evaluation harness)
 
 **Decisions**
