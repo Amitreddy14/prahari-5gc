@@ -1,0 +1,20 @@
+{
+  "name": "prahari-evasive-v1",
+  "description": "Phase-6 adaptive-attacker campaign: the same attacks as dataset.json, re-parameterised to evade the signals they can see. It is the runnable counterpart to the robustness ablation (docs/results/robustness-phase6.md) — the ablation predicts which attacks survive; running this campaign and scoring it falsifies or confirms that prediction on live traffic. Benign rate is raised to 8/s as cover traffic. 'note' on each step records which evasion it encodes; the runner ignores it.",
+  "tail_seconds": 15,
+  "benign": { "imsi_base": "001010000000001", "ue_count": 10, "rate": 8.0, "seed": 2 },
+  "steps": [
+    { "at": 30,  "id": "N2-01", "note": "low_and_slow: registration storm paced to 8/s, under the benign-calibrated rate floor",
+      "params": { "count": "240", "rate": "8", "vary_suci": "true" } },
+    { "at": 90,  "id": "N2-02", "note": "spoof_known_gnb: claim gNB id 1 (the real base station) instead of 0xBAD",
+      "params": { "count": "3", "gnb_id": "1" } },
+    { "at": 140, "id": "N4-03", "note": "low_and_slow: establishment flood paced to 10/s to stay inside benign window shape",
+      "params": { "count": "300", "rate": "10", "cleanup": "true" } },
+    { "at": 210, "id": "N4-01", "note": "target_valid_sessions: scan only the low, live SEID range the core actually assigns",
+      "params": { "seid_start": "1", "seid_count": "16", "spoof": "true", "rate": "8" } },
+    { "at": 250, "id": "SBI-04", "note": "low_and_slow: unknown-operation probe paced to 6/s (still an unknown op -> irreducible signal)",
+      "params": { "count": "150", "rate": "6" } },
+    { "at": 300, "id": "N2-03", "note": "spoof_known_gnb + low_and_slow: forged UE context release from the trusted gNB id, paced",
+      "params": { "amf_ue_count": "48", "rate": "8", "gnb_id": "1" } }
+  ]
+}
