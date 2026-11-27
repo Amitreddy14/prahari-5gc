@@ -28,6 +28,15 @@ class Detector(Protocol):
     def score(self, ev: dict[str, Any]) -> list[Any]: ...
 
 
+def _verdicts(engine: Detector, rows: list[dict[str, Any]]) -> list[list[Any]]:
+    """Per-event alerts over the time-ordered stream. A detector may offer score_all for a
+    batched (but still causal) pass -- the Isolation Forest uses it to score in one call."""
+    batch = getattr(engine, "score_all", None)
+    if callable(batch):
+        return list(batch(rows))
+    return [engine.score(ev) for ev in rows]
+
+
 def _attack_id(ev: dict[str, Any]) -> str | None:
     lab = ev.get("labels") or {}
     return str(lab["attack_id"]) if lab.get("is_attack") and lab.get("attack_id") else None
@@ -99,16 +108,19 @@ def evaluate(
         return EvalResult()
     t0, t1 = int(rows[0]["ts_ns"]), int(rows[-1]["ts_ns"])
     split = t0 + int((t1 - t0) * train_frac)
-
     engine.calibrate([r for r in rows if _attack_id(r) is None and int(r["ts_ns"]) < split])
-    engine.reset()
+    return _score(engine, rows, heldout_from=split)
 
+
+def _score(engine: Detector, rows: list[dict[str, Any]], heldout_from: int | None) -> EvalResult:
+    """Score an already-calibrated detector over time-ordered rows. Benign events with
+    ts >= heldout_from count toward the false-positive rate (None => all benign counts)."""
+    engine.reset()
     res = EvalResult()
     runs: dict[str, RunResult] = {}
     rule_hits: dict[str, int] = defaultdict(int)
-    for ev in rows:
+    for ev, alerts in zip(rows, _verdicts(engine, rows), strict=True):
         ts = int(ev["ts_ns"])
-        alerts = engine.score(ev)
         hit = bool(alerts)
         for a in alerts:
             rule_hits[getattr(a, "rule", str(a))] += 1
@@ -127,12 +139,47 @@ def evaluate(
         else:
             res.fp += hit
             res.tn += not hit
-            if ts >= split:
+            if heldout_from is None or ts >= heldout_from:
                 res.benign_heldout += 1
                 res.benign_heldout_fp += hit
     res.runs = sorted(runs.values(), key=lambda r: r.attack_id)
     res.rule_hits = dict(sorted(rule_hits.items()))
     return res
+
+
+def evaluate_cross(
+    train: Iterable[dict[str, Any]], test: Iterable[dict[str, Any]], engine: Detector
+) -> EvalResult:
+    """Cross-campaign: calibrate on the training campaigns' benign, measure on held-out test
+    campaigns. Every test benign event counts toward the false-positive rate."""
+    engine.calibrate([e for e in train if _attack_id(e) is None])
+    rows = sorted(test, key=lambda e: int(e["ts_ns"]))
+    return _score(engine, rows, heldout_from=None)
+
+
+def compare(
+    events: Iterable[dict[str, Any]], detectors: dict[str, Detector], train_frac: float = 0.4
+) -> dict[str, EvalResult]:
+    rows = list(events)
+    return {name: evaluate(rows, det, train_frac) for name, det in detectors.items()}
+
+
+def comparison_markdown(
+    results: dict[str, EvalResult], *, title: str = "Detector comparison"
+) -> str:
+    lines = [
+        f"# {title}",
+        "",
+        "| detector | attacks detected | precision | recall | F1 | held-out FP |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
+    ]
+    for name, r in results.items():
+        lines.append(
+            f"| {name} | {r.runs_detected}/{len(r.runs)} | {r.precision:.3f} | "
+            f"{r.recall:.3f} | {r.f1:.3f} | {r.fp_rate:.2%} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def load_events(path: Path) -> list[dict[str, Any]]:
